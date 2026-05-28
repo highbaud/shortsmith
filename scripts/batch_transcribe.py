@@ -9,6 +9,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+
 from slugify import slugify
 
 from shortsmith.config import VIDEO_DIR, Config, make_work_dir

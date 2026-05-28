@@ -6,7 +6,6 @@ via cmd.exe so npx resolves correctly.
 from __future__ import annotations
 
 import logging
-import shlex
 import subprocess
 import sys
 import time

@@ -6,7 +6,6 @@ to bring all existing shorts up to the latest standard.
 """
 from __future__ import annotations
 
-import json
 import logging
 import shlex
 import subprocess
@@ -109,7 +108,7 @@ def main() -> int:
     log.info("Will redo %d work dirs", len(todo))
 
     failures = []
-    for i, (wd, v) in enumerate(todo, 1):
+    for i, (_wd, v) in enumerate(todo, 1):
         log.info("[%d/%d] %s", i, len(todo), v.name)
         t0 = time.time()
         ok = redo_pipeline(v)
@@ -120,7 +119,7 @@ def main() -> int:
 
     # Render every short under auto-shorts/<source-slug>/short-*/
     log.info("Rendering all scaffolded projects ...")
-    for wd, v in todo:
+    for wd, _v in todo:
         out_dir = AUTO_SHORTS_ROOT / wd.name
         if not out_dir.exists():
             log.warning("No auto-shorts output dir for %s", wd.name)

@@ -4,6 +4,7 @@ but no formatted version yet.
 Format: ~10s blocks with `[t=Ns]` markers, max 350 chars per block.
 """
 from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path

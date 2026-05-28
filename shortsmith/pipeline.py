@@ -15,7 +15,6 @@ from pathlib import Path
 import click
 
 from shortsmith import (
-    captions,
     clean_clips,
     config,
     cut_clips,

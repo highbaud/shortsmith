@@ -23,8 +23,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .captions import group_into_segments
-from .config import Config, TEMPLATE_REF, make_output_dir
+from .config import TEMPLATE_REF, Config, make_output_dir
 
 log = logging.getLogger(__name__)
 

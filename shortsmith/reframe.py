@@ -74,7 +74,6 @@ def reframe_one(src_video: Path, out_video: Path, cfg: Config) -> None:
 
     src_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     src_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
     if src_w == 0 or src_h == 0:
         raise RuntimeError(f"Invalid video dimensions for {src_video}")
@@ -109,7 +108,6 @@ def reframe_one(src_video: Path, out_video: Path, cfg: Config) -> None:
         frame_idx += 1
     cap.release()
 
-    expected = max(1, total_frames // sample)
     if not raw:
         log.warning("No faces detected in %s; using center crop", src_video.name)
         _ffmpeg_center_crop(src_video, out_video)

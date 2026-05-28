@@ -168,7 +168,7 @@ def _silence_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
     """
     out: list[tuple[float, float]] = []
     margin = cfg.silence_margin
-    for prev, nxt in zip(words, words[1:]):
+    for prev, nxt in zip(words, words[1:], strict=False):
         gap = float(nxt["start"]) - float(prev["end"])
         if gap > SILENCE_MIN_TO_CUT:
             cut_start = float(prev["end"]) + margin

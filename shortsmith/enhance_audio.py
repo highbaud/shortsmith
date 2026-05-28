@@ -71,7 +71,7 @@ def enhance_all(
 
     # 3. Fall back per-clip for any not yet enhanced
     fallback_engines = [e for e in ("voicefixer", "resemble", "deepfilter") if e != engine]
-    for rank, cleaned, src_wav, enh_wav, _ in plan:
+    for rank, _cleaned, src_wav, enh_wav, _ in plan:
         if enh_wav.exists():
             continue
         for eng in [engine, *fallback_engines]:
@@ -93,7 +93,7 @@ def enhance_all(
             shutil.copy(src_wav, enh_wav)
 
     # 4. Mux enhanced audio back over each cleaned video
-    for rank, cleaned, src_wav, enh_wav, out_video in plan:
+    for rank, cleaned, _src_wav, enh_wav, out_video in plan:
         log.debug("Mux audio: short-%02d", rank)
         subprocess.run([
             "ffmpeg", "-y",
@@ -114,7 +114,7 @@ def enhance_all(
 
     # Cleanup tmp wavs (keep the dir for inspection if anything failed)
     try:
-        for rank, _, src_wav, enh_wav, _ in plan:
+        for _rank, _, src_wav, enh_wav, _ in plan:
             src_wav.unlink(missing_ok=True)
             enh_wav.unlink(missing_ok=True)
         tmp_dir.rmdir()
