@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-import:
+    name: lint + import smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+
+      - name: uv sync
+        run: uv sync --extra dev
+
+      - name: ruff
+        run: uv run ruff check .
+
+      - name: import smoke
+        shell: bash
+        run: |
+          uv run python -c "
+          import shortsmith
+          import shortsmith.config
+          import shortsmith.pipeline
+          import shortsmith.transcribe
+          import shortsmith.find_clips
+          import shortsmith.cut_clips
+          import shortsmith.clean_clips
+          import shortsmith.enhance_audio
+          import shortsmith.reframe
+          import shortsmith.scaffold
+          import shortsmith.captions
+          print('OK')
+          "
+
+      - name: CLI help
+        run: uv run shortsmith --help

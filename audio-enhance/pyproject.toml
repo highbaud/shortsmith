@@ -1,0 +1,10 @@
+[project]
+name = "audio-enhance"
+version = "0.1.0"
+description = "ClearerVoice-Studio wrapper for shortsmith"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "clearvoice",
+    "soundfile",
+    "numpy<2",
+]

@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <title>{{ title }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900&display=block" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --gold:   #f5c842;
+        --gold-2: #ffd86b;
+        --red:    #ff3653;
+        --red-2:  #ff6b80;
+        --green:  #2dffa8;
+        --green-2:#6bffbf;
+        --ink:    #0a0a0a;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0;
+        width: 1080px; height: 1920px;
+        background: var(--ink);
+        font-family: 'Inter', sans-serif;
+        color: #fff;
+        overflow: hidden;
+      }
+
+      .vid-wrap {
+        position: absolute; inset: 0;
+        overflow: hidden;
+        transform-origin: 50% 40%;
+        z-index: 0;
+      }
+      .vid-wrap > video {
+        width: 100%; height: 100%;
+        object-fit: cover;
+        display: block;
+        filter: contrast(1.04) saturate(1.06);
+      }
+
+      .vignette {
+        position: absolute; inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(ellipse 75% 90% at 50% 45%, transparent 35%, rgba(0,0,0,0.5) 80%, rgba(0,0,0,0.8) 100%),
+          linear-gradient(180deg, rgba(0,0,0,0.35) 0%, transparent 18%, transparent 75%, rgba(0,0,0,0.55) 100%);
+        z-index: 5;
+      }
+      .grain {
+        position: absolute; inset: 0;
+        pointer-events: none;
+        opacity: 0.06;
+        background-image:
+          radial-gradient(rgba(255,255,255,0.4) 0.5px, transparent 0.5px),
+          radial-gradient(rgba(0,0,0,0.4) 0.5px, transparent 0.5px);
+        background-size: 3px 3px, 5px 5px;
+        background-position: 0 0, 1px 2px;
+        mix-blend-mode: overlay;
+        z-index: 6;
+      }
+
+      /* ===================== CAPTION (dark glass panel near bottom) ===================== */
+      .caption {
+        position: absolute;
+        left: 50px; right: 50px;
+        bottom: 360px;
+        padding: 30px 36px 32px;
+        background: rgba(10,8,5,0.78);
+        backdrop-filter: blur(14px) saturate(1.1);
+        border-radius: 18px;
+        border: 1px solid rgba(255,255,255,0.1);
+        box-shadow: 0 14px 48px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.14);
+        text-align: center;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        font-size: 62px;
+        line-height: 1.12;
+        color: #fff;
+        text-shadow: 0 4px 14px rgba(0,0,0,0.8);
+      }
+      .caption .em-gold  { background: linear-gradient(90deg, var(--gold), var(--gold-2)); -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: 0 0 28px rgba(245,200,66,0.4); }
+      .caption .em-red   { color: var(--red-2);  text-shadow: 0 0 26px rgba(255,54,83,0.55), 0 4px 14px rgba(0,0,0,0.8); }
+      .caption .em-green { color: var(--green);  text-shadow: 0 0 28px rgba(45,255,168,0.55), 0 4px 14px rgba(0,0,0,0.8); }
+
+      /* ===================== PUNCH (Bebas Neue, top-of-frame quick text) ===================== */
+      .punch {
+        position: absolute;
+        left: 50px; right: 50px;
+        top: 220px;
+        text-align: center;
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 116px;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+        line-height: 0.94;
+        text-transform: uppercase;
+        color: #fff;
+        text-shadow:
+          0 0 28px rgba(255,255,255,0.2),
+          0 6px 22px rgba(0,0,0,0.88),
+          0 2px 0 rgba(0,0,0,0.6);
+      }
+      .punch .em-red   { color: var(--red-2);  text-shadow: 0 0 32px rgba(255,54,83,0.6),  0 6px 22px rgba(0,0,0,0.9); }
+      .punch .em-gold  { color: var(--gold-2); text-shadow: 0 0 32px rgba(245,200,66,0.55), 0 6px 22px rgba(0,0,0,0.9); }
+      .punch .em-green { color: var(--green);  text-shadow: 0 0 32px rgba(45,255,168,0.55), 0 6px 22px rgba(0,0,0,0.9); }
+
+      /* ===================== BIGSTAT (Anton number, full-screen impact) ===================== */
+      .bigstat {
+        position: absolute;
+        inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        padding: 0 60px;
+        pointer-events: none;
+      }
+      .bigstat-eyebrow {
+        font-family: 'Inter', sans-serif;
+        font-weight: 800;
+        font-size: 32px;
+        letter-spacing: 0.32em;
+        text-transform: uppercase;
+        margin-bottom: 26px;
+        text-shadow: 0 0 16px currentColor, 0 4px 14px rgba(0,0,0,0.8);
+      }
+      .bigstat-eyebrow.em-red   { color: var(--red); }
+      .bigstat-eyebrow.em-gold  { color: var(--gold); }
+      .bigstat-eyebrow.em-green { color: var(--green); }
+      .bigstat-num {
+        font-family: 'Anton', sans-serif;
+        font-size: 380px;
+        line-height: 0.85;
+        letter-spacing: -0.02em;
+        text-align: center;
+        text-shadow: 0 12px 44px rgba(0,0,0,0.85);
+      }
+      .bigstat-num.em-red   { color: var(--red);    text-shadow: 0 0 60px rgba(255,54,83,0.7),   0 0 120px rgba(255,54,83,0.35), 0 12px 44px rgba(0,0,0,0.9); }
+      .bigstat-num.em-gold  { color: var(--gold-2); text-shadow: 0 0 60px rgba(245,200,66,0.6),  0 0 120px rgba(245,200,66,0.3),  0 12px 44px rgba(0,0,0,0.9); }
+      .bigstat-num.em-green { color: var(--green);  text-shadow: 0 0 60px rgba(45,255,168,0.6),  0 0 120px rgba(45,255,168,0.3),  0 12px 44px rgba(0,0,0,0.9); }
+      .bigstat-subline {
+        font-family: 'Bebas Neue', sans-serif;
+        font-size: 78px;
+        line-height: 0.96;
+        letter-spacing: 0.01em;
+        text-transform: uppercase;
+        margin-top: 26px;
+        color: #fff;
+        text-align: center;
+        text-shadow: 0 6px 22px rgba(0,0,0,0.9);
+      }
+
+      /* ===================== HERO (Anton headline, big, center) ===================== */
+      .hero {
+        position: absolute;
+        left: 50px; right: 50px;
+        top: 50%; transform: translateY(-50%);
+        text-align: center;
+        font-family: 'Anton', 'Inter', sans-serif;
+        font-weight: 400;
+        text-transform: uppercase;
+        line-height: 0.94;
+        letter-spacing: -0.005em;
+        font-size: 152px;
+        color: #fff;
+        text-shadow:
+          0 0 32px rgba(255,255,255,0.18),
+          0 8px 28px rgba(0,0,0,0.92),
+          0 3px 0 rgba(0,0,0,0.7);
+      }
+      .hero .em-gold  { color: var(--gold-2); text-shadow: 0 0 36px rgba(245,200,66,0.55), 0 8px 28px rgba(0,0,0,0.9); }
+      .hero .em-red   { color: var(--red-2);  text-shadow: 0 0 36px rgba(255,54,83,0.55),  0 8px 28px rgba(0,0,0,0.9); }
+      .hero .em-green { color: var(--green);  text-shadow: 0 0 36px rgba(45,255,168,0.5),  0 8px 28px rgba(0,0,0,0.9); }
+
+      /* ===================== SLAM (opening hook — thumbnail moment) ===================== */
+      .slam {
+        position: absolute;
+        inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        padding: 0 60px;
+        pointer-events: none;
+      }
+      .slam-bg {
+        position: absolute; inset: 0;
+        background:
+          radial-gradient(ellipse 85% 70% at 50% 45%, rgba(0,0,0,0.25), rgba(0,0,0,0.65) 75%, rgba(0,0,0,0.85) 100%);
+      }
+      .slam-flash {
+        position: absolute; inset: 0;
+        background: radial-gradient(ellipse at 50% 38%, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0.5) 18%, transparent 55%);
+        mix-blend-mode: screen;
+        pointer-events: none;
+      }
+      .slam-overline {
+        position: relative;
+        font-family: 'Inter', sans-serif;
+        font-weight: 800;
+        font-size: 38px;
+        letter-spacing: 0.36em;
+        text-transform: uppercase;
+        margin-bottom: 32px;
+        display: flex; align-items: center; gap: 16px;
+        text-shadow: 0 4px 12px rgba(0,0,0,0.8);
+      }
+      .slam-overline::before,
+      .slam-overline::after {
+        content: '';
+        display: inline-block;
+        width: 56px; height: 3px;
+        background: currentColor;
+        box-shadow: 0 0 14px currentColor;
+      }
+      .slam-overline.em-red   { color: var(--red);   text-shadow: 0 0 18px rgba(255,54,83,0.55), 0 4px 12px rgba(0,0,0,0.8); }
+      .slam-overline.em-gold  { color: var(--gold);  text-shadow: 0 0 18px rgba(245,200,66,0.5), 0 4px 12px rgba(0,0,0,0.8); }
+      .slam-overline.em-green { color: var(--green); text-shadow: 0 0 18px rgba(45,255,168,0.5),  0 4px 12px rgba(0,0,0,0.8); }
+      .slam-headline {
+        position: relative;
+        font-family: 'Anton', 'Inter', sans-serif;
+        font-weight: 400;
+        font-size: 190px;
+        line-height: 0.88;
+        letter-spacing: -0.01em;
+        text-transform: uppercase;
+        text-align: center;
+        color: #fff;
+        text-shadow:
+          0 0 40px rgba(255,255,255,0.22),
+          0 8px 32px rgba(0,0,0,0.85),
+          0 2px 0 rgba(0,0,0,0.6);
+      }
+      .slam-headline .em-red   { color: var(--red);  text-shadow: 0 0 42px rgba(255,54,83,0.7),  0 0 90px rgba(255,54,83,0.45), 0 8px 32px rgba(0,0,0,0.9); }
+      .slam-headline .em-gold  { color: var(--gold-2); text-shadow: 0 0 42px rgba(245,200,66,0.65), 0 0 90px rgba(245,200,66,0.4), 0 8px 32px rgba(0,0,0,0.9); }
+      .slam-headline .em-green { color: var(--green);  text-shadow: 0 0 42px rgba(45,255,168,0.65), 0 0 90px rgba(45,255,168,0.4), 0 8px 32px rgba(0,0,0,0.9); }
+      .slam-rule {
+        position: relative;
+        margin-top: 32px;
+        width: 0; height: 4px;
+        background: linear-gradient(90deg, transparent, currentColor, transparent);
+        box-shadow: 0 0 14px currentColor;
+      }
+      .slam-rule.em-red   { color: var(--red); }
+      .slam-rule.em-gold  { color: var(--gold); }
+      .slam-rule.em-green { color: var(--green); }
+
+      .anim-init { opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root-comp"
+      data-composition-id="{{ comp_id_main }}"
+      data-start="0"
+      data-width="1080"
+      data-height="1920"
+      data-duration="{{ '%.2f' | format(duration) }}"
+    >
+      <!-- Face cam — already reframed to 1080x1920 -->
+      <div class="vid-wrap" id="vid-wrap">
+        <video
+          id="face-video"
+          src="assets/clip-edit.mp4"
+          data-start="0"
+          data-duration="{{ '%.2f' | format(duration) }}"
+          data-track-index="0"
+          data-has-audio="true"
+          data-volume="1.0"
+          playsinline
+        ></video>
+      </div>
+
+      <!-- Always-on: vignette + grain texture -->
+      <div class="vignette clip" id="vignette-overlay"
+           data-start="0" data-duration="{{ '%.2f' | format(duration) }}" data-track-index="5"></div>
+      <div class="grain clip" id="grain-overlay"
+           data-start="0" data-duration="{{ '%.2f' | format(duration) }}" data-track-index="6"></div>
+
+      {% if hook %}
+      <!-- Opening hook (thumbnail moment) -->
+      <div class="slam clip anim-init" id="ov-hook"
+           data-start="0.00"
+           data-duration="{{ '%.2f' | format(hook.duration) }}"
+           data-track-index="9">
+        <div class="slam-bg" id="slam-bg"></div>
+        <div class="slam-flash" id="slam-flash"></div>
+        {% if hook.overline %}<div class="slam-overline em-{{ hook.color }}" id="slam-overline">{{ hook.overline }}</div>{% endif %}
+        <div class="slam-headline" id="slam-headline">{{ hook.html | safe }}</div>
+        <div class="slam-rule em-{{ hook.color }}" id="slam-rule"></div>
+      </div>
+      {% endif %}
+
+      {% for co in callouts %}
+      {% if co.style == 'punch' %}
+      <div class="punch clip anim-init" id="ov-{{ '%02d' | format(loop.index) }}"
+           data-start="{{ '%.2f' | format(co.local_start) }}"
+           data-duration="{{ '%.2f' | format(co.duration) }}"
+           data-track-index="{{ 10 + loop.index }}">
+        {{ co.html | safe }}
+      </div>
+      {% elif co.style == 'bigstat' %}
+      <div class="bigstat clip anim-init" id="ov-{{ '%02d' | format(loop.index) }}"
+           data-start="{{ '%.2f' | format(co.local_start) }}"
+           data-duration="{{ '%.2f' | format(co.duration) }}"
+           data-track-index="{{ 10 + loop.index }}">
+        {% if co.eyebrow %}<div class="bigstat-eyebrow em-{{ co.color }}">{{ co.eyebrow }}</div>{% endif %}
+        <div class="bigstat-num em-{{ co.color }}" id="ov-{{ '%02d' | format(loop.index) }}-num">{{ co.html | safe }}</div>
+        {% if co.subline %}<div class="bigstat-subline">{{ co.subline | safe }}</div>{% endif %}
+      </div>
+      {% elif co.style == 'hero' %}
+      <div class="hero clip anim-init" id="ov-{{ '%02d' | format(loop.index) }}"
+           data-start="{{ '%.2f' | format(co.local_start) }}"
+           data-duration="{{ '%.2f' | format(co.duration) }}"
+           data-track-index="{{ 10 + loop.index }}">
+        {{ co.html | safe }}
+      </div>
+      {% else %}{# default to caption #}
+      <div class="caption clip anim-init" id="ov-{{ '%02d' | format(loop.index) }}"
+           data-start="{{ '%.2f' | format(co.local_start) }}"
+           data-duration="{{ '%.2f' | format(co.duration) }}"
+           data-track-index="{{ 10 + loop.index }}">
+        {{ co.html | safe }}
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+
+    <script>
+      (() => {
+        const tl = gsap.timeline({ paused: true });
+        const SLOT = {{ '%.2f' | format(duration) }};
+
+        // Subtle Ken Burns on face: scale 1.00 -> 1.04 -> 1.00 across the clip
+        // for perceptible "camera" motion without distraction.
+        gsap.set('#vid-wrap', { scale: 1.0 });
+        const halfway = SLOT / 2.0;
+        tl.to('#vid-wrap', { scale: 1.04, duration: halfway, ease: 'none' }, 0);
+        tl.to('#vid-wrap', { scale: 1.00, duration: SLOT - halfway, ease: 'none' }, halfway);
+
+        // Animation helpers
+        const reveal = (sel, t0, dur, opts = {}) => {
+          const inDur  = opts.inDur  ?? 0.5;
+          const outDur = opts.outDur ?? 0.4;
+          const fromY  = opts.fromY  ?? 22;
+          const fromScale = opts.fromScale ?? 0.92;
+          gsap.set(sel, { autoAlpha: 0, y: fromY, scale: fromScale });
+          tl.to(sel, { autoAlpha: 1, y: 0, scale: 1, duration: inDur, ease: 'power3.out' }, t0);
+          tl.to(sel, { autoAlpha: 0, y: -14, duration: outDur, ease: 'power2.in' }, t0 + dur - outDur);
+        };
+
+        const punch = (sel, t0, dur) => {
+          gsap.set(sel, { autoAlpha: 0, scale: 1.22, filter: 'blur(10px)' });
+          tl.to(sel, { autoAlpha: 1, scale: 1, filter: 'blur(0px)', duration: 0.4, ease: 'back.out(2.0)' }, t0);
+          tl.to(sel, { autoAlpha: 0, scale: 0.96, duration: 0.35, ease: 'power2.in' }, t0 + dur - 0.35);
+        };
+
+        const bigstat = (sel, numSel, t0, dur) => {
+          gsap.set(sel, { autoAlpha: 0 });
+          gsap.set(sel + ' .bigstat-eyebrow', { opacity: 0, y: 14 });
+          gsap.set(numSel, { opacity: 0, scale: 1.5, filter: 'blur(14px)' });
+          gsap.set(sel + ' .bigstat-subline', { opacity: 0, y: 16 });
+          tl.to(sel, { autoAlpha: 1, duration: 0.3 }, t0);
+          tl.to(sel + ' .bigstat-eyebrow', { opacity: 1, y: 0, duration: 0.45, ease: 'power3.out' }, t0 + 0.05);
+          tl.to(numSel, { opacity: 1, scale: 1, filter: 'blur(0px)', duration: 0.6, ease: 'back.out(2.0)' }, t0 + 0.18);
+          tl.to(sel + ' .bigstat-subline', { opacity: 1, y: 0, duration: 0.5, ease: 'power3.out' }, t0 + 0.55);
+          tl.to(sel, { autoAlpha: 0, scale: 0.96, duration: 0.4, ease: 'power2.in' }, t0 + dur - 0.4);
+        };
+
+        {% if hook %}
+        // Opening slam (hook / thumbnail moment) — fires at t=0
+        const HOOK_DUR = {{ '%.2f' | format(hook.duration) }};
+        gsap.set('#ov-hook', { autoAlpha: 1 });
+        gsap.set('#slam-bg', { opacity: 0 });
+        gsap.set('#slam-flash', { opacity: 0, scale: 0.4 });
+        {% if hook.overline %}gsap.set('#slam-overline', { opacity: 0, y: -10, letterSpacing: '0.6em' });{% endif %}
+        gsap.set('#slam-headline', { opacity: 0, scale: 1.35, y: 28, filter: 'blur(10px)' });
+        gsap.set('#slam-rule', { width: 0 });
+
+        tl.to('#slam-bg',    { opacity: 1, duration: 0.18, ease: 'power2.out' }, 0);
+        tl.to('#slam-flash', { opacity: 1, scale: 1, duration: 0.12, ease: 'power3.out' }, 0.03)
+          .to('#slam-flash', { opacity: 0, duration: 0.45, ease: 'power2.in' }, 0.18);
+        {% if hook.overline %}tl.to('#slam-overline', { opacity: 1, y: 0, letterSpacing: '0.36em', duration: 0.42, ease: 'power3.out' }, 0.14);{% endif %}
+        tl.to('#slam-headline', { opacity: 1, scale: 1, y: 0, filter: 'blur(0px)', duration: 0.5, ease: 'back.out(2.1)' }, 0.2);
+        tl.to('#slam-rule', { width: 320, duration: 0.45, ease: 'power3.out' }, 0.7);
+
+        // Exit: slide up + fade + blur (clears the way for the face cam)
+        tl.to('#ov-hook', { y: -40, autoAlpha: 0, filter: 'blur(8px)', duration: 0.42, ease: 'power2.in' }, HOOK_DUR - 0.42);
+        {% endif %}
+
+        // Per-callout animations
+        {% for co in callouts %}
+          {% set idx = '%02d' | format(loop.index) %}
+          {% if co.style == 'punch' %}
+            punch('#ov-{{ idx }}', {{ '%.2f' | format(co.local_start) }}, {{ '%.2f' | format(co.duration) }});
+          {% elif co.style == 'bigstat' %}
+            bigstat('#ov-{{ idx }}', '#ov-{{ idx }}-num', {{ '%.2f' | format(co.local_start) }}, {{ '%.2f' | format(co.duration) }});
+          {% elif co.style == 'hero' %}
+            reveal('#ov-{{ idx }}', {{ '%.2f' | format(co.local_start) }}, {{ '%.2f' | format(co.duration) }}, { inDur: 0.55, fromScale: 0.88 });
+          {% else %}
+            reveal('#ov-{{ idx }}', {{ '%.2f' | format(co.local_start) }}, {{ '%.2f' | format(co.duration) }}, { inDur: 0.55 });
+          {% endif %}
+        {% endfor %}
+
+        // Pad timeline to exact composition duration
+        tl.to({}, { duration: SLOT }, 0);
+
+        window.__timelines = window.__timelines || {};
+        window.__timelines['{{ comp_id_main }}'] = tl;
+      })();
+    </script>
+  </body>
+</html>

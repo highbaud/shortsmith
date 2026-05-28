@@ -1,0 +1,46 @@
+# Python venvs and caches
+.venv/
+audio-enhance/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Model checkpoints (downloaded at runtime)
+audio-enhance/checkpoints/
+audio-enhance/test/
+checkpoints/
+models/cache/
+
+# Pipeline work artifacts
+work/
+*.log
+
+# Generated media (never commit user-supplied videos / outputs)
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.wav
+*.mp3
+# But DO commit the bundled smoke-test sample and anything inside the kit
+!examples/sample_clip.mp4
+!hyperframes-student-kit/**/*.mp4
+!hyperframes-student-kit/**/*.wav
+
+# Local config (never commit secrets)
+.env
+.env.local
+
+# Editor / OS junk
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
