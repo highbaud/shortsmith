@@ -97,12 +97,68 @@ def _compute_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
     #    neighboring word.
     cuts.extend(_filler_cuts(words, cfg))
 
-    # 2. Long silences — gaps between non-filler words. Cut from
+    # 2. Stutter / immediate word repetition — keep only the last take.
+    cuts.extend(_stutter_cuts(words, cfg))
+
+    # 3. Long silences — gaps between non-filler words. Cut from
     #    word_end+margin to next_word_start-margin so a breath remains.
     cuts.extend(_silence_cuts(words, cfg))
 
-    # 3. Merge overlapping/adjacent cuts so we issue a single, contiguous range.
+    # 4. Merge overlapping/adjacent cuts so we issue a single, contiguous range.
     return _merge_overlapping(cuts)
+
+
+def _stutter_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
+    """Collapse immediate identical word repetitions (stammers).
+
+    For a run of >= stutter_min_repeats adjacent words sharing the same
+    normalized stem, each separated from the next by < stutter_max_gap seconds,
+    keep ONLY the last occurrence and cut the span of the earlier ones.
+
+    Conservative by design: only exact-stem adjacent repeats with tight gaps
+    collapse, so deliberate, evenly-paced emphasis ("no, no, no") is preserved
+    because its inter-word gaps exceed stutter_max_gap.
+    """
+    if not getattr(cfg, "stutter_repair", True) or len(words) < 2:
+        return []
+
+    max_gap = getattr(cfg, "stutter_max_gap", 0.35)
+    min_repeats = getattr(cfg, "stutter_min_repeats", 2)
+
+    def norm(w: dict) -> str:
+        return (w.get("text") or w.get("word") or "").strip().lower().rstrip(",.?!:;-")
+
+    cuts: list[tuple[float, float]] = []
+    n = len(words)
+    i = 0
+    while i < n - 1:
+        stem = norm(words[i])
+        if not stem:
+            i += 1
+            continue
+        # Extend a run of identical stems separated by sub-threshold gaps.
+        j = i
+        while j + 1 < n:
+            nxt = words[j + 1]
+            if norm(nxt) != stem:
+                break
+            gap = float(nxt["start"]) - float(words[j]["end"])
+            if gap > max_gap:
+                break
+            j += 1
+        run_len = j - i + 1
+        if run_len >= min_repeats:
+            # Keep words[j] (the cleanest/last take). Cut earlier repeats.
+            cut_start = float(words[i]["start"])
+            cut_end = float(words[j]["start"])
+            if i > 0:
+                cut_start = max(cut_start, float(words[i - 1]["end"]) + 0.001)
+            if cut_end > cut_start + 0.02:
+                cuts.append((cut_start, cut_end))
+            i = j + 1
+        else:
+            i += 1
+    return cuts
 
 
 def _filler_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:

@@ -16,6 +16,8 @@ import click
 
 from shortsmith import (
     _wizard,
+    align,
+    checkpoint,
     clean_clips,
     config,
     cut_clips,
@@ -157,6 +159,7 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         t0 = time.time()
         log.info("Step 3: cutting %d clips (with reorder + xfade seams)", len(clips))
         manifests = cut_clips.cut_all(clips, words, video, work_dir, cfg)
+        checkpoint.mark_step(work_dir, 3)
         log.info("Step 3 done (%.1fs)", time.time() - t0)
     else:
         manifests = json.loads((work_dir / "cut_manifests.json").read_text(encoding="utf-8"))
@@ -167,6 +170,7 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         log.info("Step 4: cleaning %d clips (word-aware silence + filler removal)", len(manifests))
         manifests = clean_clips.clean_all(manifests, words, work_dir, cfg)
         _save_manifests(manifests, work_dir)
+        checkpoint.mark_step(work_dir, 4)
         log.info("Step 4 done (%.1fs)", time.time() - t0)
 
     # ---- Step 5: enhance audio ----
@@ -175,22 +179,20 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         log.info("Step 5: enhancing speech audio (%s)", cfg.enhance_engine)
         manifests = enhance_audio.enhance_all(manifests, work_dir, cfg)
         _save_manifests(manifests, work_dir)
+        checkpoint.mark_step(work_dir, 5)
         log.info("Step 5 done (%.1fs)", time.time() - t0)
     elif not enhance:
         for m in manifests:
             m["enhanced_path"] = m.get("cleaned_path") or m["raw_path"]
         log.info("Step 5 skipped (--no-enhance)")
 
-    # ---- Step 6: retranscribe each cleaned/enhanced clip ----
+    # ---- Step 6: word alignment of each cleaned/enhanced clip ----
     if from_step <= 6:
         t0 = time.time()
-        log.info("Step 6: re-transcribing each clip after edits")
-        for m in manifests:
-            clip_path = Path(m.get("enhanced_path") or m["cleaned_path"])
-            words_out = clip_path.with_suffix(".words.json")
-            transcribe.transcribe(clip_path, words_out, cfg, reuse_existing=False)
-            m["words_path"] = str(words_out)
+        log.info("Step 6: aligning word timings (%s)", getattr(cfg, "align_engine", "whisperx"))
+        manifests = align.align_all(manifests, cfg)
         _save_manifests(manifests, work_dir)
+        checkpoint.mark_step(work_dir, 6)
         log.info("Step 6 done (%.1fs)", time.time() - t0)
 
     # ---- Step 7: reframe to 9:16 ----
@@ -199,12 +201,14 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         log.info("Step 7: reframing to 9:16 with face tracking")
         manifests = reframe.reframe_all(manifests, work_dir, cfg)
         _save_manifests(manifests, work_dir)
+        checkpoint.mark_step(work_dir, 7)
         log.info("Step 7 done (%.1fs)", time.time() - t0)
 
     # ---- Step 8: scaffold Hyperframes projects ----
     t0 = time.time()
     log.info("Step 8: scaffolding Hyperframes projects")
     project_dirs = scaffold.scaffold_all(manifests, clips, video, work_dir, cfg)
+    checkpoint.mark_step(work_dir, 8)
     log.info("Step 8 done (%.1fs, %d projects)", time.time() - t0, len(project_dirs))
 
     log.info("DONE.")

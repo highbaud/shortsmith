@@ -48,3 +48,6 @@ jobs:
 
       - name: CLI help
         run: uv run shortsmith --help
+
+      - name: pytest (unit tests)
+        run: uv run --with pytest --with pytest-mock pytest tests/ -v

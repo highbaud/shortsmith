@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] — Unreleased
+
+### Added
+- **WhisperX forced alignment** (`shortsmith/align.py`) — re-transcribes each
+  enhanced clip via wav2vec2 to ~20ms word boundaries. Replaces step 6's
+  in-process faster-whisper retranscribe. Sharper karaoke captions, cleaner
+  cut seams. Runs in sibling `whisperx-align/` uv project; falls back to
+  faster-whisper if unavailable.
+- **Loudness normalization** (`shortsmith/normalize.py`) — two-pass ffmpeg
+  `loudnorm` after step 5 enhancement. Default target -14 LUFS (TikTok /
+  Instagram / YouTube short-form playback standard).
+- **Stutter / immediate-repetition repair** in clean step. Collapses runs of
+  identical adjacent stems separated by <350ms (configurable). Preserves
+  deliberate emphasis with normal pacing.
+- **Crash-recovery checkpoints** (`shortsmith/checkpoint.py`). Per-step
+  `.progress.json` in each work dir. Resume picks up where the last successful
+  step ended instead of re-running everything.
+- **Better Whisper error messages** — OOM, CUDA, and compute-type failures now
+  print actionable hints (e.g., "set SHORTSMITH_WHISPER_MODEL=medium") instead
+  of raw torch stack traces.
+- **Unit tests** (`tests/`): boundary snap, normalize, scaffold callouts +
+  hook, stutter repair. 22 tests, runs in <0.1s, no GPU or API key required.
+- **`scripts/redo_outdated.py`** — re-process work dirs whose `cut_manifests.json`
+  predates a quality-fix epoch.
+- **`run_everything.ps1`** — Windows wrapper to chain `batch_pipeline.py` +
+  `redo_outdated.py` in sequence.
+
+### Changed
+- CI workflow now runs `pytest tests/` on all three OSes.
+- `.env.example` documents `SHORTSMITH_LUFS`, `SHORTSMITH_ALIGN`,
+  `SHORTSMITH_WHISPERX_ALIGN`.
+
 ## [0.2.0] — Unreleased
 
 ### Added

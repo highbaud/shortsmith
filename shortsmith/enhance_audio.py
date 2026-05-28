@@ -21,6 +21,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import normalize
 from .config import AUDIO_ENHANCE_PROJECT, Config
 
 log = logging.getLogger(__name__)
@@ -91,6 +92,18 @@ def enhance_all(
         if not enh_wav.exists():
             log.warning("short-%02d: all engines failed; using original audio", rank)
             shutil.copy(src_wav, enh_wav)
+
+    # 3.5 Loudness normalization (two-pass loudnorm) to a consistent LUFS.
+    if getattr(cfg, "loudness_enabled", True):
+        for rank, _cleaned, _src_wav, enh_wav, _ in plan:
+            norm_wav = enh_wav.with_name(enh_wav.stem + "_norm.wav")
+            ok = normalize.loudnorm_two_pass(enh_wav, norm_wav, cfg)
+            if ok and norm_wav.exists():
+                # Replace enh_wav with the normalized version for muxing.
+                norm_wav.replace(enh_wav)
+                log.info("Normalized short-%02d to %.1f LUFS", rank, cfg.loudness_target_lufs)
+            else:
+                norm_wav.unlink(missing_ok=True)
 
     # 4. Mux enhanced audio back over each cleaned video
     for rank, cleaned, _src_wav, enh_wav, out_video in plan:

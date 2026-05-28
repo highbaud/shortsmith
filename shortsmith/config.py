@@ -59,6 +59,7 @@ TEMPLATE_REF          = Path(_template_override).expanduser().resolve() \
                         if _template_override \
                         else KIT_ROOT / "video-projects" / "may-shorts-19"
 AUDIO_ENHANCE_PROJECT = _resolve_path("SHORTSMITH_AUDIO_ENHANCE",   "audio-enhance")
+WHISPERX_ALIGN_PROJECT = _resolve_path("SHORTSMITH_WHISPERX_ALIGN", "whisperx-align")
 VIDEO_DIR             = _resolve_path("SHORTSMITH_VIDEO_DIR",       "videos")
 
 DEFAULT_FILLERS = [
@@ -120,6 +121,30 @@ class Config:
     # slightly early, the silence cut preserves the audio tail of the spoken
     # word rather than clipping its trailing consonant.
     silence_margin: float = 0.30
+
+    # Stutter / immediate word-repetition repair (clean step).
+    # When the speaker stammers ("I-I-I think", "the the wealth"), keep only the
+    # final occurrence. Conservative: only collapses identical adjacent stems
+    # separated by a gap shorter than stutter_max_gap, so deliberate emphasis
+    # ("no, no, no") with normal pacing survives.
+    stutter_repair: bool = True
+    stutter_max_gap: float = 0.35          # seconds between repeats to count as a stammer
+    stutter_min_repeats: int = 2           # 2 = collapse any immediate doubling
+
+    # Loudness normalization (after enhance). Two-pass ffmpeg loudnorm to a
+    # consistent integrated loudness so clips don't get scroll-past'd (too quiet)
+    # or clipped (too hot). -14 LUFS = the TikTok/Instagram/YouTube playback
+    # normalization target for short-form vertical.
+    loudness_enabled: bool = True
+    loudness_target_lufs: float = float(os.environ.get("SHORTSMITH_LUFS", "-14.0"))
+    loudness_true_peak: float = -1.5       # dBTP ceiling — headroom for lossy re-encode
+    loudness_range: float = 11.0           # target LRA
+
+    # Forced alignment (step 6). "whisperx" (default) re-transcribes then aligns
+    # word boundaries to ~20ms via wav2vec2 — tight captions + clean cut seams.
+    # Runs in sibling uv project WHISPERX_ALIGN_PROJECT. Falls back to
+    # "faster-whisper" (the in-process re-transcribe) if whisperx is unavailable.
+    align_engine: str = os.environ.get("SHORTSMITH_ALIGN", "whisperx")
 
     # Audio enhancement.
     # "clearvoice" (default) = ClearerVoice-Studio MossFormer2_SE_48K, SOTA

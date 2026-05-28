@@ -44,34 +44,63 @@ def transcribe(
 
     log.info("Loading faster-whisper model=%s device=%s compute=%s",
              cfg.whisper_model, cfg.whisper_device, cfg.whisper_compute_type)
-    model = WhisperModel(
-        cfg.whisper_model,
-        device=cfg.whisper_device,
-        compute_type=cfg.whisper_compute_type,
-    )
+    try:
+        model = WhisperModel(
+            cfg.whisper_model,
+            device=cfg.whisper_device,
+            compute_type=cfg.whisper_compute_type,
+        )
 
-    log.info("Transcribing %s", video_path)
-    segments, info = model.transcribe(
-        str(video_path),
-        word_timestamps=True,
-        vad_filter=True,
-        vad_parameters={"min_silence_duration_ms": 250},
-    )
+        log.info("Transcribing %s", video_path)
+        segments, info = model.transcribe(
+            str(video_path),
+            word_timestamps=True,
+            vad_filter=True,
+            vad_parameters={"min_silence_duration_ms": 250},
+        )
 
-    words: list[dict] = []
-    for seg in segments:
-        if not seg.words:
-            continue
-        for w in seg.words:
-            words.append({
-                "text": w.word.strip(),
-                "start": round(w.start, 3),
-                "end": round(w.end, 3),
-            })
+        words: list[dict] = []
+        for seg in segments:
+            if not seg.words:
+                continue
+            for w in seg.words:
+                words.append({
+                    "text": w.word.strip(),
+                    "start": round(w.start, 3),
+                    "end": round(w.end, 3),
+                })
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(_whisper_error_hint(e, cfg)) from e
 
     _write_words(out_path, words)
     log.info("Wrote %d words to %s", len(words), out_path)
     return words
+
+
+def _whisper_error_hint(e: Exception, cfg: Config) -> str:
+    """Turn a raw Whisper/CUDA failure into an actionable message."""
+    msg = str(e).lower()
+    if "out of memory" in msg or "cuda" in msg and "memory" in msg:
+        return (
+            f"Whisper ran out of GPU memory on model '{cfg.whisper_model}'. "
+            "Try a smaller model: set SHORTSMITH_WHISPER_MODEL=medium (or small), "
+            "or reduce VRAM pressure by closing other GPU apps. "
+            f"Original error: {e}"
+        )
+    if "cuda" in msg or "no kernel image" in msg or "device" in msg:
+        return (
+            "Whisper failed to use CUDA. Confirm the GPU build of torch/ctranslate2 "
+            "is installed, or fall back to CPU with SHORTSMITH_WHISPER_DEVICE=cpu "
+            "(slow). "
+            f"Original error: {e}"
+        )
+    if "compute" in msg or "float16" in msg:
+        return (
+            "Whisper compute type unsupported on this device. Try "
+            "SHORTSMITH_WHISPER_COMPUTE=int8 (or float32). "
+            f"Original error: {e}"
+        )
+    return f"Whisper transcription failed: {e}"
 
 
 def _write_words(out_path: Path, words: list[dict]) -> None:
