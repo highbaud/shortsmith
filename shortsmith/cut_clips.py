@@ -101,21 +101,39 @@ def _snap_boundary(
     Guarantees: the returned time NEVER lands inside a word — it's always
     in a silence between two words (or at the very start/end of the transcript).
 
-    Tiered preference:
-      Tier 0 — sentence-end punctuation + ≥min_silence gap, within ±snap_window
-      Tier 1 — ≥breath_silence gap (any), within ±snap_window
-      Tier 2 — any word gap, within ±(snap_window × 2.5)
-      Tier 3 — any word gap, within ±(snap_window × 5.0) — last resort to avoid mid-word
+    `prefer_after` matters for end-of-clip snaps: we want to EXTEND forward
+    to find a clean sentence end rather than chop a thought short. So when
+    `prefer_after=True`:
+      - Forward search window is 3× wider than backward at tier 0/1 (sentence
+        end / breath). We'll happily extend a clip up to ~1.8s to land on a
+        real sentence end, but only retreat 0.6s.
+      - Backward candidates get a distance penalty so forward sentence-ends
+        beat them when ranking.
 
-    Returns None ONLY if the transcript is empty or has fewer than 2 words.
+    Tiered preference:
+      Tier 0 — sentence-end punctuation + ≥min_silence gap
+      Tier 1 — ≥breath_silence gap (any)
+      Tier 2 — any word gap, within ±(snap_window × 2.5)
+      Tier 3 — any word gap, within ±(snap_window × 5.0) — last resort
     """
     if not words or len(words) < 2:
         return t
 
-    wide = cfg.boundary_snap_window * 2.5
-    widest = cfg.boundary_snap_window * 5.0
+    base = cfg.boundary_snap_window
 
-    # Build (tier, dist, boundary_time) for every word gap.
+    # Asymmetric windows when snapping the END of a clip.
+    if prefer_after:
+        fwd_window = base * 3.0   # ~1.8s forward to find a sentence end
+        bwd_window = base          # 0.6s backward only
+        fwd_wide = base * 5.0      # ~3s forward fallback for any breath
+        bwd_wide = base * 2.5      # ~1.5s backward fallback
+        fwd_widest = base * 8.0    # ~4.8s forward worst-case
+        bwd_widest = base * 5.0    # 3s backward worst-case
+    else:
+        fwd_window = bwd_window = base
+        fwd_wide = bwd_wide = base * 2.5
+        fwd_widest = bwd_widest = base * 5.0
+
     candidates: list[tuple[int, float, float]] = []
     for i in range(len(words) - 1):
         prev = words[i]
@@ -124,31 +142,48 @@ def _snap_boundary(
         next_start = float(nxt["start"])
         gap = next_start - prev_end
         if gap <= 0:
-            continue  # overlapping / degenerate — skip
+            continue
 
         boundary = (prev_end + next_start) / 2.0
-        dist = abs(boundary - t)
+        delta = boundary - t
+        dist = abs(delta)
+        is_forward = delta >= 0
+
+        # Pick the right window for this candidate's direction.
+        if is_forward:
+            w0, w1, w2 = fwd_window, fwd_wide, fwd_widest
+        else:
+            w0, w1, w2 = bwd_window, bwd_wide, bwd_widest
 
         prev_text = (prev.get("text") or prev.get("word") or "").strip()
         ends_with_punct = any(prev_text.endswith(p) for p in PUNCTUATION_END)
 
-        # Classify tier
-        if ends_with_punct and gap >= cfg.boundary_min_silence and dist <= cfg.boundary_snap_window:
+        if ends_with_punct and gap >= cfg.boundary_min_silence and dist <= w0:
             tier = 0
-        elif gap >= cfg.boundary_breath_silence and dist <= cfg.boundary_snap_window:
+        elif gap >= cfg.boundary_breath_silence and dist <= w0:
             tier = 1
-        elif dist <= wide:
+        elif dist <= w1:
             tier = 2
-        elif dist <= widest:
+        elif dist <= w2:
             tier = 3
         else:
-            continue  # too far — not a candidate at all
+            continue
 
-        candidates.append((tier, dist, boundary))
+        # Directional bias when prefer_after: forward candidates rank as if
+        # they were 30% closer, backward 30% further. Sentence-end forward
+        # always beats word-gap backward.
+        if prefer_after and is_forward:
+            sort_key = dist * 0.7
+        elif prefer_after and not is_forward:
+            sort_key = dist * 1.3
+        else:
+            sort_key = dist
+
+        candidates.append((tier, sort_key, boundary))
 
     if not candidates:
-        # Absolute last resort: the closest word boundary anywhere. Better to
-        # extend the clip by several seconds than to land inside a word.
+        # Absolute last resort: closest word boundary anywhere. Better to
+        # extend the clip by several seconds than land inside a word.
         gaps = []
         for i in range(len(words) - 1):
             prev_end = float(words[i]["end"])
@@ -160,7 +195,6 @@ def _snap_boundary(
             return gaps[0][1]
         return None
 
-    # Prefer best tier, then closest distance.
     candidates.sort(key=lambda c: (c[0], c[1]))
     return candidates[0][2]
 

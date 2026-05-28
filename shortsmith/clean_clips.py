@@ -30,8 +30,9 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 # Minimum silence gap we'll consider cutting. Anything shorter is left as a
-# natural breath. Tunable via config.
-SILENCE_MIN_TO_CUT = 0.55  # seconds
+# natural breath. Bumped from 0.55s to 0.80s to preserve dramatic pauses and
+# the rhythm of natural speech — we only cut clearly excessive silences.
+SILENCE_MIN_TO_CUT = 0.80  # seconds
 
 
 def clean_all(

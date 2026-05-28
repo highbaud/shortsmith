@@ -62,14 +62,17 @@ AUDIO_ENHANCE_PROJECT = _resolve_path("SHORTSMITH_AUDIO_ENHANCE",   "audio-enhan
 VIDEO_DIR             = _resolve_path("SHORTSMITH_VIDEO_DIR",       "videos")
 
 DEFAULT_FILLERS = [
+    # Pure stammers — never content.
     "um", "uh", "uhm", "erm", "mm",
-    "like",  # common filler — but also a verb; the LLM-pruned list would be better. Leave on.
+    # Discourse fillers that are almost always filler in conversational
+    # podcast speech.
     "you know",
-    "sort of",
-    "kind of",
-    "basically",
-    "literally",
-    "right?",
+    # NOT in this list (too often content words — chopping them sounds wrong):
+    #   "like"        — verb, preposition, simile marker
+    #   "basically"   — sometimes a real adverb
+    #   "literally"   — sometimes a real adverb
+    #   "sort of" / "kind of" — softeners but often meaningful
+    #   "right?"      — tag question, often a real beat
 ]
 
 @dataclass
@@ -113,7 +116,10 @@ class Config:
     fillers: list[str] = field(default_factory=lambda: list(DEFAULT_FILLERS))
     filler_pad_seconds: float = 0.06
     silence_threshold: float = 0.04
-    silence_margin: float = 0.20
+    # Was 0.20 — bumped to 0.30 so even when Whisper's word-end timing is
+    # slightly early, the silence cut preserves the audio tail of the spoken
+    # word rather than clipping its trailing consonant.
+    silence_margin: float = 0.30
 
     # Audio enhancement.
     # "clearvoice" (default) = ClearerVoice-Studio MossFormer2_SE_48K, SOTA
