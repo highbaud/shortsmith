@@ -15,6 +15,7 @@ from pathlib import Path
 import click
 
 from shortsmith import (
+    _wizard,
     clean_clips,
     config,
     cut_clips,
@@ -76,16 +77,29 @@ def transcribe_only(video: Path) -> None:
               help="Override the enhancement engine. Default: clearvoice (ClearerVoice-Studio MossFormer2_SE_48K).")
 @click.option("--min-score", type=int, default=None,
               help="Drop clips below this viral_score (1-10). Default 7. Use 8+ for stricter, 5 for permissive.")
+@click.option("--style", type=str, default=None,
+              help="Visual style preset (templates/styles/<name>/). Built-in: xrp-revolution, minimal, bold. Default: xrp-revolution.")
+@click.option("--clip-engine", type=click.Choice(["anthropic", "ollama"]), default=None,
+              help="Clip-selection backend. anthropic=Claude API (best, costs ~$0.10-$2/video). ollama=local LLM (free, experimental, lower quality).")
 def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
-        engine: str | None, min_score: int | None) -> None:
+        engine: str | None, min_score: int | None, style: str | None,
+        clip_engine: str | None) -> None:
     """Run the full pipeline on a single source video."""
     _setup_logging()
+
+    # First-run wizard: ask once for clip engine + style if env is unset.
+    if _wizard.needs_wizard(from_step) and not clip_engine and not style:
+        _wizard.run_wizard(config.REPO_ROOT)
 
     cfg = config.Config()
     if engine:
         cfg.enhance_engine = engine
     if min_score is not None:
         cfg.min_viral_score = min_score
+    if style:
+        cfg.style = style
+    if clip_engine:
+        cfg.clip_engine = clip_engine
 
     problems = cfg.validate()
     # Filter problems by what the upcoming steps actually need.

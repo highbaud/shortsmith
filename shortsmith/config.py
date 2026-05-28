@@ -79,9 +79,19 @@ class Config:
     whisper_device: str = os.environ.get("SHORTSMITH_WHISPER_DEVICE", "cuda")
     whisper_compute_type: str = os.environ.get("SHORTSMITH_WHISPER_COMPUTE", "float16")
 
-    # Claude
+    # Clip engine. "anthropic" (default, best quality, costs API credits) or
+    # "ollama" (local OpenAI-compatible endpoint, free, experimental, requires
+    # a running Ollama / LM Studio / vLLM server).
+    clip_engine: str = os.environ.get("SHORTSMITH_CLIP_ENGINE", "anthropic")
+
+    # Anthropic
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
     claude_model: str = os.environ.get("SHORTSMITH_CLAUDE_MODEL", "claude-opus-4-7")
+
+    # Local LLM (Ollama / LM Studio / vLLM — any OpenAI-compatible endpoint)
+    local_llm_url: str = os.environ.get("SHORTSMITH_LOCAL_LLM_URL", "http://localhost:11434/v1")
+    local_llm_model: str = os.environ.get("SHORTSMITH_LOCAL_LLM_MODEL", "llama3.1:70b")
+    local_llm_temperature: float = float(os.environ.get("SHORTSMITH_LOCAL_LLM_TEMP", "0.3"))
 
     # Clip selection
     min_clip_seconds: float = 30.0
@@ -134,6 +144,10 @@ class Config:
     # Scaffold
     enable_captions: bool = False  # karaoke captions inclusion in index.html
     enable_callouts: bool = True   # big-text scene overlays at key moments
+    # Visual style preset. Ships with: "xrp-revolution" (default),
+    # "minimal", "bold". Each preset is a templates/styles/<name>/style.json
+    # with colors, fonts, hook sizing, and overlay flags.
+    style: str = os.environ.get("SHORTSMITH_STYLE", "xrp-revolution")
 
     # Captions
     phrase_gap_seconds: float = 0.45
@@ -141,8 +155,12 @@ class Config:
 
     def validate(self) -> list[str]:
         problems = []
-        if not self.anthropic_api_key:
-            problems.append("ANTHROPIC_API_KEY env var is not set")
+        # API key is only required when the Anthropic engine is selected.
+        if self.clip_engine == "anthropic" and not self.anthropic_api_key:
+            problems.append(
+                "ANTHROPIC_API_KEY env var is not set. Set it in .env, "
+                "or switch to --clip-engine ollama for free local picking."
+            )
         if not KIT_ROOT.exists():
             problems.append(
                 f"Hyperframes kit not found at {KIT_ROOT}. "

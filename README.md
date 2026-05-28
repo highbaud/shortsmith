@@ -44,21 +44,48 @@ Forgot `--recurse-submodules`? Run `git submodule update --init --recursive`.
 See [docs/SETUP.md](docs/SETUP.md) for per-OS install steps, CUDA torch matrix
 (RTX 50 / 40 / 30 / older), and first-run model download sizes.
 
-## A note on cost
+## Clip-selection backend: API vs free local
 
-Step 2 (find viral clips) calls Claude Opus once per source video with the
-full transcript. Empirical cost:
+Step 2 (find viral clips) can run two ways. The first-run wizard asks once and
+saves your choice; override anytime with `--clip-engine` or `SHORTSMITH_CLIP_ENGINE`.
 
-| Source length | Approx. transcript tokens | Approx. cost |
-|---|---|---|
-| 30 min | ~5 k | $0.10 |
-| 1 hr   | ~10 k | $0.20 |
-| 2 hr   | ~20 k | $0.50 |
-| 3 hr   | ~30 k | $0.80 |
+| Backend | Quality | Cost | Setup |
+|---|---|---|---|
+| `anthropic` (default) | Best | $0.10–$2.00 per source video | Just set `ANTHROPIC_API_KEY` |
+| `ollama` (experimental) | Lower; spot-check picks | Free | Run an OpenAI-compatible local server |
 
-The system prompt lives at [`prompts/find_viral_clips.md`](prompts/find_viral_clips.md) —
-edit it to tune the rubric for your content. If you'd rather skip the API
+**For free local picking**, install [Ollama](https://ollama.com/):
+
+```bash
+# Pull a model (~40-48 GB VRAM for 70B; smaller models work but produce weaker picks):
+ollama pull llama3.1:70b
+ollama serve
+
+# Run shortsmith with the local backend:
+uv run shortsmith run path/to/video.mp4 --clip-engine ollama
+```
+
+The Ollama backend also works against LM Studio or vLLM — point
+`SHORTSMITH_LOCAL_LLM_URL` at any OpenAI-compatible endpoint.
+
+The system prompt lives at [`prompts/find_viral_clips.md`](prompts/find_viral_clips.md).
+Edit it to tune the rubric for your content. If you'd rather skip step 2
 entirely, hand-write a `clips.json` and pass `--from-step 3`.
+
+## Visual style presets
+
+Three preset styles ship in [`templates/styles/`](templates/styles/):
+
+| Preset | Vibe | Fonts | Colors |
+|---|---|---|---|
+| `xrp-revolution` (default) | Premium, high-energy | Anton + Bebas Neue + Inter | gold #f5c842 / red #ff3653 / green #2dffa8 |
+| `minimal` | Clean editorial | Inter only | yellow #facc15 single accent |
+| `bold` | Loud, attention-grabby | Bebas Neue + Anton | electric yellow + magenta + cyan |
+
+Pick at run time with `--style` or set `SHORTSMITH_STYLE`. Each preset is a
+`style.json` with colors, fonts, hook size, and overlay flags — copy
+`templates/styles/xrp-revolution/style.json` to a new directory and tweak it
+to make your own preset.
 
 ## Configuration
 
@@ -71,7 +98,11 @@ full surface. The high-traffic knobs:
 | `ANTHROPIC_API_KEY` | (required) | Claude API key |
 | `SHORTSMITH_WHISPER_MODEL` | `large-v3` | `small` / `medium` / `large-v2` / `large-v3` |
 | `SHORTSMITH_WHISPER_DEVICE` | `cuda` | `cuda` / `cpu` |
-| `SHORTSMITH_MIN_SCORE` | `7` | Reject Claude-returned clips below this viral score (1–10) |
+| `SHORTSMITH_MIN_SCORE` | `7` | Reject clips below this viral score (1–10) |
+| `SHORTSMITH_CLIP_ENGINE` | `anthropic` | `anthropic` (Claude API) / `ollama` (local LLM) |
+| `SHORTSMITH_LOCAL_LLM_URL` | `http://localhost:11434/v1` | OpenAI-compatible endpoint when engine=ollama |
+| `SHORTSMITH_LOCAL_LLM_MODEL` | `llama3.1:70b` | Model name to request from the local server |
+| `SHORTSMITH_STYLE` | `xrp-revolution` | `xrp-revolution` / `minimal` / `bold` |
 | `SHORTSMITH_ENHANCE` | `clearvoice` | `clearvoice` / `voicefixer` / `resemble` / `deepfilter` |
 | `SHORTSMITH_KIT_ROOT` | `./hyperframes-student-kit` | Override if your kit lives elsewhere |
 | `SHORTSMITH_AUDIO_ENHANCE` | `./audio-enhance` | Override if you keep audio-enhance elsewhere |

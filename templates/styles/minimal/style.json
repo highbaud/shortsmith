@@ -1,0 +1,32 @@
+{
+  "name": "minimal",
+  "description": "Clean, editorial. Inter only, single yellow accent, no vignette, subtle hook. Reads as 'serious newsletter'.",
+  "fonts": {
+    "google": "Inter:wght@400;500;600;700;800;900",
+    "display": "Inter",
+    "secondary": "Inter",
+    "body": "Inter"
+  },
+  "colors": {
+    "background": "#0a0a0a",
+    "text": "#ffffff",
+    "gold": "#facc15",
+    "gold_2": "#fde047",
+    "red": "#ef4444",
+    "red_2": "#f87171",
+    "green": "#22c55e",
+    "green_2": "#4ade80"
+  },
+  "hook": {
+    "enabled": true,
+    "duration_default": 2.2,
+    "headline_size": 140,
+    "scale_in_from": 1.08,
+    "blur_in_px": 0
+  },
+  "overlays": {
+    "vignette": false,
+    "grain": false,
+    "grain_opacity": 0
+  }
+}

@@ -2,7 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.1.0] — Unreleased
+## [0.2.0] — Unreleased
+
+### Added
+- **First-run wizard** in `shortsmith run`. If `SHORTSMITH_CLIP_ENGINE` or
+  `SHORTSMITH_STYLE` aren't set, prompt the user interactively (terminal only)
+  and persist their choices to `.env`.
+- **Local-LLM clip selection backend** (`--clip-engine ollama`). Works with
+  any OpenAI-compatible local endpoint — Ollama, LM Studio, vLLM. Marked
+  EXPERIMENTAL; expect lower-quality picks vs Claude Opus.
+- **`shortsmith/find_clips/` package**: dispatcher + `anthropic.py` + `ollama.py` +
+  shared `_common.py` (transcript formatting, JSON parsing, normalization).
+- **Visual style presets** (`templates/styles/<name>/style.json`):
+  - `xrp-revolution` (default) — premium, gold/red/green, Anton display.
+  - `minimal` — clean editorial, Inter only, single yellow accent.
+  - `bold` — loud high-contrast, electric yellow + magenta + cyan.
+- `--clip-engine`, `--style`, `SHORTSMITH_CLIP_ENGINE`, `SHORTSMITH_STYLE`,
+  `SHORTSMITH_LOCAL_LLM_URL`, `SHORTSMITH_LOCAL_LLM_MODEL`,
+  `SHORTSMITH_LOCAL_LLM_TEMP` env vars.
+
+### Changed
+- `Config.validate()` no longer demands `ANTHROPIC_API_KEY` when
+  `clip_engine == "ollama"`.
+- README + `.env.example` document both backends and all three styles.
+
+## [0.1.0]
 
 Initial public release.
 

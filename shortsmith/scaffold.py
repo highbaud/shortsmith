@@ -28,7 +28,18 @@ from .config import TEMPLATE_REF, Config, make_output_dir
 log = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+STYLES_DIR = TEMPLATES_DIR / "styles"
 AMBIENT_BG_SRC = TEMPLATE_REF / "compositions" / "ambient-bg.html"
+
+
+def _load_style(name: str) -> dict:
+    """Load a style preset's style.json. Falls back to xrp-revolution if missing."""
+    style_path = STYLES_DIR / name / "style.json"
+    if not style_path.exists():
+        log.warning("Style preset %r not found at %s; falling back to xrp-revolution",
+                    name, style_path)
+        style_path = STYLES_DIR / "xrp-revolution" / "style.json"
+    return json.loads(style_path.read_text(encoding="utf-8"))
 
 
 def scaffold_all(
@@ -120,13 +131,15 @@ def _scaffold_one(
     # Build the opening hook (thumbnail moment) if present.
     hook = _build_hook(clip, duration)
 
-    # Render index.html (self-contained — no separate compositions/ subcomps).
+    # Load style preset and render index.html.
+    style = _load_style(cfg.style)
     index_html = env.get_template("index.html.j2").render(
         title=f"Short {rank:02d} — {slug}",
         comp_id_main=comp_id_main,
         duration=duration,
         callouts=callouts,
         hook=hook,
+        style=style,
     )
     (project_dir / "index.html").write_text(index_html, encoding="utf-8")
 

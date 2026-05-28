@@ -1,8 +1,8 @@
-"""Step 2: Use Claude to rank viral evergreen clips from a transcript.
+"""Shared helpers used by every find_clips backend.
 
-Sends the entire transcript with [t=NNs] timestamps every 10s, plus the
-prompt from prompts/find_viral_clips.md. Parses returned JSON into a list
-of clip dicts and writes to clips.json.
+The transcript formatting, JSON parsing tolerance, and clip normalization
+logic are identical regardless of which model picks the clips. Only the
+"send the prompt and get a JSON response" step varies between backends.
 """
 from __future__ import annotations
 
@@ -12,55 +12,16 @@ from pathlib import Path
 
 from slugify import slugify
 
-from .config import Config
-
 log = logging.getLogger(__name__)
 
-PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "find_viral_clips.md"
+PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "find_viral_clips.md"
 
 
-def find_clips(
-    words: list[dict],
-    out_path: Path,
-    cfg: Config,
-) -> list[dict]:
-    """Send transcript to Claude, parse JSON response, write clips.json."""
-    import anthropic
-
-    if not cfg.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set")
-
-    transcript_text = _format_transcript(words)
-    system_prompt = PROMPT_PATH.read_text(encoding="utf-8")
-
-    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
-    log.info("Calling Claude (%s) to rank clips...", cfg.claude_model)
-    resp = client.messages.create(
-        model=cfg.claude_model,
-        max_tokens=8192,
-        system=system_prompt,
-        messages=[{"role": "user", "content": transcript_text}],
-    )
-
-    raw = resp.content[0].text  # type: ignore[attr-defined]
-    clips = _parse_json_response(raw)
-
-    # Validate & normalize
-    clips = _normalize(clips, words)
-
-    # Post-filter by viral score — keep only clips at/above the threshold.
-    raw_count = len(clips)
-    clips = [c for c in clips if c["viral_score"] >= cfg.min_viral_score]
-    log.info("Viral-score filter (>=%d): %d kept, %d dropped",
-             cfg.min_viral_score, len(clips), raw_count - len(clips))
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(clips, indent=2, ensure_ascii=False), encoding="utf-8")
-    log.info("Wrote %d clips to %s", len(clips), out_path)
-    return clips
+def load_system_prompt() -> str:
+    return PROMPT_PATH.read_text(encoding="utf-8")
 
 
-def _format_transcript(words: list[dict]) -> str:
+def format_transcript(words: list[dict]) -> str:
     """Build a readable transcript with [t=NNs] markers every 10 seconds."""
     if not words:
         return ""
@@ -86,6 +47,24 @@ def _format_transcript(words: list[dict]) -> str:
     return "\n".join(parts).strip()
 
 
+def parse_json_response(raw: str) -> list[dict]:
+    """Extract a JSON array from a model response — tolerant of stray prose / fences."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
+
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start == -1 or end == -1:
+        raise ValueError(f"No JSON array found in model response:\n{raw[:500]}")
+    return json.loads(raw[start : end + 1])
+
+
 def _normalize_callouts(raw: list) -> list[dict]:
     out: list[dict] = []
     for c in raw or []:
@@ -103,33 +82,9 @@ def _normalize_callouts(raw: list) -> list[dict]:
     return out
 
 
-def _parse_json_response(raw: str) -> list[dict]:
-    """Extract JSON from Claude's response — tolerant of stray prose / fences."""
-    raw = raw.strip()
-    # Strip fences if present
-    if raw.startswith("```"):
-        # Strip first line (```json or ```) and last fence
-        lines = raw.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        raw = "\n".join(lines).strip()
-
-    # Find the first [ and last ] to handle any trailing prose
-    start = raw.find("[")
-    end = raw.rfind("]")
-    if start == -1 or end == -1:
-        raise ValueError(f"No JSON array found in Claude response:\n{raw[:500]}")
-    return json.loads(raw[start : end + 1])
-
-
-def _normalize(clips: list[dict], words: list[dict]) -> list[dict]:
-    """Ensure clips have all required fields. Drop invalid ones."""
-    if not words:
-        max_t = 0.0
-    else:
-        max_t = float(words[-1]["end"])
+def normalize_clips(clips: list[dict], words: list[dict]) -> list[dict]:
+    """Validate, deduplicate, normalize structure. Drop invalid clips."""
+    max_t = float(words[-1]["end"]) if words else 0.0
 
     out = []
     for i, c in enumerate(clips):
@@ -137,15 +92,16 @@ def _normalize(clips: list[dict], words: list[dict]) -> list[dict]:
             start = float(c["start"])
             end = float(c["end"])
             if end <= start or end > max_t + 1.0:
-                log.warning("Dropping clip %d: bad start/end (%s, %s, max=%s)", i, start, end, max_t)
+                log.warning("Dropping clip %d: bad start/end (%s, %s, max=%s)",
+                            i, start, end, max_t)
                 continue
             duration = end - start
             if duration < 5.0 or duration > 180.0:
                 log.warning("Dropping clip %d: duration %.1fs out of range", i, duration)
                 continue
+
             segments = c.get("segments") or [[start, end]]
-            # Validate segments
-            valid_segs = []
+            valid_segs: list[list[float]] = []
             for s in segments:
                 if isinstance(s, dict):
                     s = [s.get("start"), s.get("end")]
@@ -173,13 +129,13 @@ def _normalize(clips: list[dict], words: list[dict]) -> list[dict]:
                 "slug": slug,
                 "instagram_caption": (c.get("instagram_caption") or "").strip(),
                 "callouts": _normalize_callouts(c.get("callouts") or []),
+                "hook": c.get("hook"),
             })
         except (KeyError, ValueError, TypeError) as e:
             log.warning("Dropping malformed clip %d: %s", i, e)
             continue
 
     out.sort(key=lambda c: (-c["viral_score"], c["rank"]))
-    # Renumber rank after sort
     for i, c in enumerate(out):
         c["rank"] = i + 1
     return out

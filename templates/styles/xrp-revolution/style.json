@@ -1,0 +1,32 @@
+{
+  "name": "xrp-revolution",
+  "description": "Premium, high-energy. Gold/red/green palette, Anton display, slam hook, vignette + grain. Default.",
+  "fonts": {
+    "google": "Anton&family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900",
+    "display": "Anton",
+    "secondary": "Bebas Neue",
+    "body": "Inter"
+  },
+  "colors": {
+    "background": "#0a0a0a",
+    "text": "#ffffff",
+    "gold": "#f5c842",
+    "gold_2": "#ffd86b",
+    "red": "#ff3653",
+    "red_2": "#ff6b80",
+    "green": "#2dffa8",
+    "green_2": "#6bffbf"
+  },
+  "hook": {
+    "enabled": true,
+    "duration_default": 2.6,
+    "headline_size": 190,
+    "scale_in_from": 1.35,
+    "blur_in_px": 10
+  },
+  "overlays": {
+    "vignette": true,
+    "grain": true,
+    "grain_opacity": 0.06
+  }
+}

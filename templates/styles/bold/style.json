@@ -1,0 +1,32 @@
+{
+  "name": "bold",
+  "description": "Loud, high-contrast. Electric yellow + magenta + cyan, Bebas Neue display, oversized slam hook, heavy grain. For attention-grabby content.",
+  "fonts": {
+    "google": "Bebas+Neue&family=Anton&family=Inter:wght@400;500;600;700;800;900",
+    "display": "Bebas Neue",
+    "secondary": "Anton",
+    "body": "Inter"
+  },
+  "colors": {
+    "background": "#050505",
+    "text": "#ffffff",
+    "gold": "#fff200",
+    "gold_2": "#ffff66",
+    "red": "#ff00aa",
+    "red_2": "#ff66cc",
+    "green": "#00f0ff",
+    "green_2": "#66f7ff"
+  },
+  "hook": {
+    "enabled": true,
+    "duration_default": 2.8,
+    "headline_size": 220,
+    "scale_in_from": 1.5,
+    "blur_in_px": 14
+  },
+  "overlays": {
+    "vignette": true,
+    "grain": true,
+    "grain_opacity": 0.1
+  }
+}
