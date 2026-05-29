@@ -214,21 +214,22 @@ clip's content. Structure:
 Should advance the topic, not just restate the hook.>
 
 <single-line CTA: "Follow for more on X" / "What's your take?" / "Save this for later" — pick what fits, or omit if the ending lands>
-
-<empty line>
-
-#hashtag1 #hashtag2 #hashtag3 ...
 ```
 
-- Total length: 250–800 characters before the hashtags.
-- 8–12 hashtags. Mix 2-3 broad (#shorts, #investing) with 5-8 niche-specific
-  (#xrp, #wealthbuilding, #digitalassetstrategy). No spam hashtags
-  (#follow4follow etc.).
+- Total length: 250–800 characters.
+- NO hashtags. Do not include any "#tag" anywhere — the creator adds their own
+  per platform. End on the CTA (or the body, if no CTA).
 - No em-dashes (—); they read as AI. Use regular dashes or restructure.
 - Write the caption as if the creator is posting it themselves — match the
   voice / cadence implied by the clip's content.
 - Do NOT use the literal phrase "in this short" or "in this clip" — the viewer
   is already watching it.
+- Avoid AI-slop tells: don't lean on "it's not X, it's Y" binary contrasts,
+  rule-of-three lists ("fast, simple, powerful"), infomercial hooks ("here's
+  the kicker", "the best part?"), or hyperbole ("game-changer", "this changes
+  everything"). No thesaurus words (utilize, leverage, delve, robust, vibrant,
+  landscape, realm, crucial). Write plainly, with specifics, like a person who
+  knows the topic. Vary sentence length.
 
 ## Output format
 

@@ -145,6 +145,112 @@ def _pick_base(short_dir: Path, mode: str) -> Path:
     sys.exit(f"No base video found in {short_dir} (need a Hyperframes render or assets/clip-edit.mp4)")
 
 
+# Pure filler tokens that should never appear as caption words. Matched on the
+# token stripped of surrounding punctuation, lowercased — so "Um," / "uh." go too.
+_FILLER_WORDS = {"um", "uh", "uhm", "umm", "uhh", "erm", "mm", "mmm", "hmm"}
+
+
+# Band thickness (~2 lines of 96px Anton + padding) and clearance, as fractions
+# of the 1920px frame height. Bottom-UI limits keep captions above each app's
+# chrome; top limit keeps an above-head band off the very edge.
+_BAND_H = 0.13
+_BAND_GAP = 0.025
+_BOTTOM_UI_LIMIT = {"tiktok": 0.86, "instagram": 0.84, "youtube": 0.90, "generic": 0.88}
+_TOP_LIMIT = 0.05
+
+
+def _face_aware_band(base_abs: Path, platform: str) -> dict:
+    """Pick a caption safe-band that avoids the speaker's face.
+
+    Samples frames from the base render, finds the face's vertical extent with
+    YuNet (same model reframe uses), and places the band in the clear space:
+    below the chin if it fits above the platform's bottom-UI zone, else above
+    the head. Falls back to the static platform band if no face is found or
+    OpenCV / the model is unavailable.
+    """
+    default = PLATFORM_BANDS.get(platform, PLATFORM_BANDS["generic"])
+    try:
+        import cv2  # type: ignore
+
+        from shortsmith.config import Config
+    except Exception:
+        return default
+
+    cfg = Config()
+    model = getattr(cfg, "yunet_model_path", None)
+    if not model or not Path(model).exists():
+        return default
+
+    cap = cv2.VideoCapture(str(base_abs))
+    if not cap.isOpened():
+        return default
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1080
+    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1920
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    thr = float(getattr(cfg, "yunet_score_threshold", 0.6))
+    try:
+        detector = cv2.FaceDetectorYN_create(str(model), "", (W, H), thr, 0.3, 5000)
+    except Exception:
+        cap.release()
+        return default
+
+    tops: list[float] = []
+    bottoms: list[float] = []
+    n = 12
+    idxs = [int(total * i / (n + 1)) for i in range(1, n + 1)] if total > n else list(range(total))
+    for fi in idxs:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+        ret, frame = cap.read()
+        if not ret:
+            continue
+        _, faces = detector.detect(frame)
+        if faces is not None and len(faces) > 0:
+            best = max(faces, key=lambda f: f[-1])
+            if float(best[-1]) >= thr:
+                y, h = float(best[1]), float(best[3])
+                tops.append(max(0.0, y / H))
+                bottoms.append(min(1.0, (y + h) / H))
+    cap.release()
+
+    if len(bottoms) < 3:
+        return default
+
+    def pct(arr: list[float], p: float) -> float:
+        arr = sorted(arr)
+        k = min(len(arr) - 1, max(0, round(p * (len(arr) - 1))))
+        return arr[k]
+
+    # 80th pct chin (respects downward head moves without chasing one outlier);
+    # 20th pct hairline for the above-head option.
+    face_bottom = pct(bottoms, 0.80)
+    face_top = pct(tops, 0.20)
+    bottom_limit = _BOTTOM_UI_LIMIT.get(platform, _BOTTOM_UI_LIMIT["generic"])
+
+    below_top = face_bottom + _BAND_GAP
+    if below_top + _BAND_H <= bottom_limit:
+        return {"top": round(below_top, 4), "bottom": round(below_top + _BAND_H, 4)}
+
+    above_bottom = face_top - _BAND_GAP
+    above_top = above_bottom - _BAND_H
+    if above_top >= _TOP_LIMIT:
+        return {"top": round(above_top, 4), "bottom": round(above_bottom, 4)}
+
+    return default  # face fills the frame — no clean spot, keep default
+
+
+def _drop_fillers(words: list[dict]) -> list[dict]:
+    """Remove standalone filler interjections (um/uh/…) from caption words so the
+    karaoke captions stay clean. The underlying audio is untouched — this only
+    affects what text gets drawn on screen."""
+    out = []
+    for w in words:
+        token = str(w.get("text", "")).strip().strip(".,!?;:—-").lower()
+        if token in _FILLER_WORDS:
+            continue
+        out.append(w)
+    return out
+
+
 def _overlay_windows(short_dir: Path, clip_duration: float) -> list[dict]:
     """Derive Hyperframes overlay time windows (hook + callouts) from the source
     _clips.json, replicating scaffold.py's clamping so the windows match what
@@ -308,9 +414,10 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
         base_rel = staged_base.relative_to(short_dir).as_posix()
 
     words = json.loads(words_path.read_text(encoding="utf-8")) if words_path.exists() else []
+    words = _drop_fillers(words)
     overlays = _overlay_windows(short_dir, duration)
     broll = _validate_broll(_merge_broll(short_dir, broll_arg), overlays, duration)
-    band = PLATFORM_BANDS.get(platform, PLATFORM_BANDS["generic"])
+    band = _face_aware_band(base_abs, platform) if captions else PLATFORM_BANDS.get(platform, PLATFORM_BANDS["generic"])
     palette = _resolve_palette(style)
 
     props = {
@@ -320,7 +427,7 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
         "captionsEnabled": captions,
         "words": words,
         "captionBand": band,
-        "captionMaxWords": 4,
+        "captionMaxWords": 3,
         "captionFadeSeconds": 0.2,
         "overlayWindows": overlays,
         "broll": broll,
@@ -336,7 +443,8 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
 
     print(f"Rendering {short_dir.name} -> {out_path.name}")
     print(f"  base={base_rel} ({duration:.1f}s)  captions={'on' if captions else 'off'} "
-          f"({platform})  overlays={len(overlays)}  broll={len(broll)}  palette={style}")
+          f"({platform})  overlays={len(overlays)}  broll={len(broll)}  palette={style}  "
+          f"band=[{band['top']:.2f},{band['bottom']:.2f}]")
 
     npx = "npx.cmd" if sys.platform == "win32" else "npx"
     cmd = [

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -189,7 +190,7 @@ def _scaffold_one(
 
     # Instagram caption — write a .txt with the same stem as the project folder,
     # placed at the source-slug parent so all captions are scannable side-by-side.
-    caption_text = clip.get("instagram_caption") or _fallback_caption(clip)
+    caption_text = _strip_hashtags(clip.get("instagram_caption") or _fallback_caption(clip))
     caption_path = project_dir.parent / f"{project_dir.name}.txt"
     caption_path.write_text(caption_text + "\n", encoding="utf-8")
     # Also drop one inside the project for portability.
@@ -198,6 +199,24 @@ def _scaffold_one(
     log.info("Scaffolded %s (duration=%.2fs, %d callouts, ig-caption=%dch)",
              project_dir.relative_to(project_dir.parent.parent), duration, len(callouts), len(caption_text))
     return project_dir
+
+
+# Matches a hashtag token (#word, #word-with-dashes) plus any leading whitespace,
+# so removing it doesn't leave dangling spaces.
+_HASHTAG_RE = re.compile(r"[ \t]*#\w[\w-]*")
+
+
+def _strip_hashtags(text: str) -> str:
+    """Remove every #hashtag from a caption and tidy the resulting whitespace.
+
+    Captions ship without hashtags (user preference) — the creator adds their
+    own per-platform. Drops all '#tag' tokens, then collapses the blank lines
+    that an end-of-caption hashtag block leaves behind.
+    """
+    cleaned = _HASHTAG_RE.sub("", text)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)   # trailing spaces per line
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)   # collapse 3+ blank lines
+    return cleaned.strip()
 
 
 def _fallback_caption(clip: dict) -> str:
@@ -209,16 +228,15 @@ def _fallback_caption(clip: dict) -> str:
     reasoning = (clip.get("reasoning") or "").strip()
 
     # Heuristic: use the hook line as both the attention-grab and the body
-    # opener, then a generic CTA + a small starter hashtag set. The user is
-    # expected to edit this — it's a fallback, not the primary output.
+    # opener, then a simple CTA. No hashtags (user adds their own per platform).
+    # The user is expected to edit this — it's a fallback, not the primary output.
     headline = hook.upper() if hook and not hook.endswith("?") else hook
-    body_blurb = reasoning if reasoning else "Save this for later — it lands harder the second time."
+    body_blurb = reasoning if reasoning else "Save this for later, it lands harder the second time."
 
     return (
         f"{headline}\n\n"
         f"{body_blurb}\n\n"
-        f"Follow for more.\n\n"
-        f"#shorts #reels #viralvideo"
+        f"Follow for more."
     )
 
 

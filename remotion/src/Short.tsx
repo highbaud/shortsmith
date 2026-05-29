@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AbsoluteFill,
   OffthreadVideo,
@@ -7,9 +7,17 @@ import {
   useCurrentFrame,
   useVideoConfig,
   interpolate,
+  delayRender,
+  continueRender,
 } from "remotion";
+import { loadFont } from "@remotion/google-fonts/Anton";
 import { BRoll } from "./BRoll";
-import { CaptionBand, ShortProps, TimeWindow, Word } from "./types";
+import { CaptionBand, Palette, ShortProps, TimeWindow, Word } from "./types";
+
+// Anton: heavy condensed display face, matches the Hyperframes hook/callouts.
+// waitUntilDone() resolves once the webfont is actually parsed/ready — we block
+// the render on it below so headless Chrome never paints a fallback-font frame.
+const { fontFamily: ANTON, waitUntilDone: waitForAnton } = loadFont();
 
 type Chunk = { words: Word[]; start: number; end: number };
 
@@ -48,7 +56,8 @@ const Captions: React.FC<{
   band: CaptionBand;
   yieldWindows: TimeWindow[];
   fade: number;
-}> = ({ words, maxWords, band, yieldWindows, fade }) => {
+  palette: Palette;
+}> = ({ words, maxWords, band, yieldWindows, fade, palette }) => {
   const frame = useCurrentFrame();
   const { fps, height } = useVideoConfig();
   const t = frame / fps;
@@ -96,22 +105,46 @@ const Captions: React.FC<{
             display: "flex",
             flexWrap: "wrap",
             justifyContent: "center",
-            gap: "0 18px",
+            // Per-span margins (below) handle word spacing — flex `gap` is not
+            // honored reliably in the headless-Chrome render, so don't depend on it.
             transform: `scale(${interpolate(appear, [0, 1], [0.92, 1])})`,
             opacity: appear,
           }}
         >
           {active.words.map((w, i) => {
+            // Three states: the word being spoken right now (accent + pop),
+            // words already spoken (solid white), words not yet spoken (dim).
+            const isActive = t >= w.start - 0.03 && t < w.end + 0.10;
             const spoken = t >= w.start - 0.02;
+            const pop = isActive
+              ? interpolate(t, [w.start - 0.03, w.start + 0.10], [1.0, 1.14], {
+                  extrapolateLeft: "clamp",
+                  extrapolateRight: "clamp",
+                })
+              : 1;
+            const color = isActive
+              ? palette.primary
+              : spoken
+                ? "#ffffff"
+                : "rgba(255,255,255,0.5)";
             return (
               <span
                 key={i}
                 style={{
-                  fontFamily: '"Inter", "Helvetica Neue", Arial, sans-serif',
-                  fontWeight: 800,
-                  fontSize: 92,
-                  lineHeight: 1.08,
-                  color: spoken ? "#ffffff" : "rgba(255,255,255,0.55)",
+                  display: "inline-block",
+                  // Longhand single-value margins: the space-separated `margin`
+                  // shorthand (and flex `gap`) get dropped in this render env.
+                  marginLeft: 28,
+                  marginRight: 28,
+                  marginTop: 8,
+                  marginBottom: 8,
+                  fontFamily: ANTON,
+                  fontWeight: 400, // Anton is single-weight
+                  fontSize: 96,
+                  lineHeight: 1.05,
+                  color,
+                  transform: `scale(${pop})`,
+                  transformOrigin: "center 60%",
                   // Outline via layered text-shadow (NOT -webkit-text-stroke,
                   // which self-intersects on t/l/a/s glyphs in headless Chrome
                   // and renders as little boxes over the letters).
@@ -154,6 +187,17 @@ export const Short: React.FC<ShortProps> = ({
   // frame would otherwise have karaoke text on top of it). Logo *badges* are a
   // small upper-area overlay that leaves the base video and captions visible,
   // so they do NOT suppress captions.
+  // Block the render until Anton is loaded so the first frames aren't drawn in a
+  // fallback font (headless Chrome would otherwise paint before the webfont is
+  // ready). Lazy useState handle => one delayRender per mount; always continue,
+  // even on failure, so a font hiccup can't hang the whole render.
+  const [fontHandle] = useState(() => delayRender("Loading Anton font"));
+  useEffect(() => {
+    waitForAnton()
+      .then(() => continueRender(fontHandle))
+      .catch(() => continueRender(fontHandle));
+  }, [fontHandle]);
+
   const isBadge = (s: typeof broll[number]) => s.type === "logo" && s.mode === "badge";
   const brollWindows: TimeWindow[] = broll
     .filter((s) => !isBadge(s))
@@ -171,6 +215,7 @@ export const Short: React.FC<ShortProps> = ({
           band={captionBand}
           yieldWindows={yieldWindows}
           fade={captionFadeSeconds}
+          palette={palette}
         />
       ) : null}
 
