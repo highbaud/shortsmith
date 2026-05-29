@@ -46,6 +46,23 @@ The pack lives at `assets/sfx/pack/` as level-normalized files. Build it from ra
 uv run python scripts/build_sfx_pack.py
 ```
 
+## Discovering what's available (index)
+
+To survey every raw drop without listening to each file, run:
+
+```bash
+uv run python scripts/build_sfx_index.py
+```
+
+It writes `assets/sfx/index.json` (structured) + `assets/sfx/CATALOG.md`
+(human-readable). For each file: duration, peak dBFS, channels, an auto
+category (whoosh / whip / ding / impact / money / magic / click / pop / ui /
+riser / camera / error / beep / unknown), and a list of slot suggestions.
+
+Use this when deciding which raw drops to promote into `CURATION` inside
+`scripts/build_sfx_pack.py`. The CATALOG groups files by their best-fit slot
+so you can see at a glance which slots are over- or under-served.
+
 The builder:
 - Normalizes peak to **-9 dBFS** so everything sits at a consistent level.
 - Trims leading silence so the hit lands exactly on the beat.

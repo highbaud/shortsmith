@@ -9,6 +9,14 @@ All notable changes to this project will be documented in this file.
   and normalized pack/ alike). Fresh clones now get a working sound-effect
   library out of the box; no need to run `scripts/build_sfx_pack.py` before
   `scripts/add_sfx.py` or `scripts/finalize.py` produce audio.
+- **`scripts/build_sfx_index.py`** — scans every file in `assets/sfx/`
+  (raw drops + pack/), ffprobes duration / sample rate / channels and
+  ffmpeg-volumedetects peak + mean dBFS, heuristically categorizes by
+  filename (whoosh / whip / ding / impact / money / magic / click / pop /
+  ui / riser / camera / error / beep), suggests one or more slot mappings
+  per file, and writes `assets/sfx/index.json` (structured) +
+  `assets/sfx/CATALOG.md` (human-readable, grouped by slot). Makes
+  choosing which raw drop fills which slot a lookup rather than a listen.
 
 ### Changed
 - `.gitignore` excludes `.claude/` (local Claude Code session state).
