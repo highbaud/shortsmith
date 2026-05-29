@@ -39,11 +39,14 @@ Options:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import random
 import re
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -56,7 +59,18 @@ from render_remotion import _overlay_windows, _pick_base, _probe_duration  # noq
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "gen_broll.md"
 GAP_MARGIN = 0.2          # keep slides this far inside each free gap edge
 MIN_GAP = 2.4             # ignore free gaps shorter than this (no room for a slide)
-UA = "shortsmith-broll/1.0 (https://example.local; contact: shortsmith)"
+# Wikimedia's UA policy asks for a real contact URL; the repo URL is a stable
+# pointer back to the project.
+UA = "shortsmith/0.5 (+https://github.com/highbaud/shortsmith)"
+
+# --- Network politeness ---
+# Cache successful fetches on disk so identical URLs never hit the network twice.
+_CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "broll-fetch"
+# Minimum interval between outbound requests. Wikimedia / Openverse / Wikipedia
+# tolerate ~5 req/s easily but we stay polite at ~2 req/s with jitter so a
+# 1000-clip reprocess never trips a rate limit.
+_THROTTLE_SECONDS = 0.5
+_LAST_FETCH_AT = 0.0  # module-level monotonic clock of last network attempt
 
 
 # --------------------------------------------------------------------------- #
@@ -262,14 +276,78 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def _http_get(url: str) -> bytes | None:
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            if r.status == 200:
-                return r.read()
-    except Exception as e:  # noqa: BLE001 - network best-effort
-        print(f"    fetch failed {url}: {e}")
+def _cache_path_for(url: str) -> Path:
+    """Stable on-disk cache key. Suffix preserves extension for inspection."""
+    h = hashlib.sha1(url.encode("utf-8")).hexdigest()
+    # Keep an extension hint when the URL has one so debug viewers can preview.
+    ext = ""
+    lower = url.lower().split("?", 1)[0]
+    for candidate in (".svg", ".png", ".jpg", ".jpeg", ".webp", ".json"):
+        if lower.endswith(candidate):
+            ext = candidate
+            break
+    return _CACHE_DIR / f"{h}{ext}"
+
+
+def _http_get(url: str, *, max_retries: int = 3) -> bytes | None:
+    """Best-effort HTTP GET with on-disk cache, polite throttle, and retry.
+
+    - Cache: every successful response is stored at .cache/broll-fetch/<sha1>.<ext>
+      and short-circuits future fetches. Run with SHORTSMITH_BROLL_NOCACHE=1 to
+      bypass; delete the directory to invalidate.
+    - Throttle: minimum 0.5s between live calls (with jitter). Cached hits skip
+      the throttle entirely.
+    - Retry: exponential backoff on 429 and 503 (1s, 2s, 4s + jitter), up to
+      max_retries. Other HTTP errors fail immediately.
+    - Offline: SHORTSMITH_BROLL_OFFLINE=1 disables all live network and returns
+      None for any uncached URL.
+    """
+    global _LAST_FETCH_AT
+
+    # 1. Local cache hit.
+    cache_path = _cache_path_for(url)
+    if cache_path.exists() and not os.environ.get("SHORTSMITH_BROLL_NOCACHE"):
+        try:
+            return cache_path.read_bytes()
+        except OSError:
+            pass  # Fall through to refetch.
+
+    # 2. Offline mode — never hit the network.
+    if os.environ.get("SHORTSMITH_BROLL_OFFLINE"):
+        return None
+
+    # 3. Polite throttle.
+    elapsed = time.monotonic() - _LAST_FETCH_AT
+    if elapsed < _THROTTLE_SECONDS:
+        time.sleep(_THROTTLE_SECONDS - elapsed + random.uniform(0.0, 0.2))
+
+    # 4. Live fetch with retry on rate-limit / unavailable.
+    for attempt in range(max_retries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                if r.status == 200:
+                    data = r.read()
+                    _LAST_FETCH_AT = time.monotonic()
+                    try:
+                        cache_path.parent.mkdir(parents=True, exist_ok=True)
+                        cache_path.write_bytes(data)
+                    except OSError:
+                        pass  # cache write is best-effort
+                    return data
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 503) and attempt < max_retries - 1:
+                wait = (2 ** attempt) + random.uniform(0.0, 1.0)
+                print(f"    HTTP {e.code} from {url[:60]}; backing off {wait:.1f}s")
+                time.sleep(wait)
+                continue
+            print(f"    fetch failed {url}: HTTP {e.code}")
+            break
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            print(f"    fetch failed {url}: {e}")
+            break
+
+    _LAST_FETCH_AT = time.monotonic()
     return None
 
 
@@ -538,7 +616,15 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true", help="Print proposed slides; don't download/write")
     ap.add_argument("--photo-seed", type=int, default=None,
                     help="Seed the person-photo shuffle for reproducible picks (default: random variety)")
+    ap.add_argument("--offline", action="store_true",
+                    help="Disable all network. Uses on-disk cache only; uncached URLs return nothing.")
+    ap.add_argument("--no-cache", action="store_true",
+                    help="Bypass the on-disk fetch cache. Every URL re-hits the network.")
     args = ap.parse_args()
+    if args.offline:
+        os.environ["SHORTSMITH_BROLL_OFFLINE"] = "1"
+    if args.no_cache:
+        os.environ["SHORTSMITH_BROLL_NOCACHE"] = "1"
     generate(args.short_dir, heuristic=args.heuristic, cap=args.cap, dry_run=args.dry_run,
              photo_seed=args.photo_seed)
 

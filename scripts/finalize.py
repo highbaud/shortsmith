@@ -174,17 +174,53 @@ def phase2_consolidate() -> int:
 
 
 def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Final-version pass: Remotion -> SFX -> consolidate."
+    )
+    ap.add_argument(
+        "--skip-remotion", action="store_true",
+        help="Skip Phase 0 (captions + b-roll). Use when Remotion / Node / "
+             "network isn't available; SFX falls back to the Hyperframes base render.",
+    )
+    ap.add_argument(
+        "--skip-sfx", action="store_true",
+        help="Skip Phase 1 (SFX overlay). Consolidate the best available render "
+             "(final_remotion.mp4 or final.mp4) directly.",
+    )
+    ap.add_argument(
+        "--offline", action="store_true",
+        help="Force Phase 0 (if not skipped) to use the on-disk b-roll fetch cache only; "
+             "no live HTTP to Commons / Openverse / Wikipedia.",
+    )
+    args = ap.parse_args()
+
+    if args.offline:
+        os.environ["SHORTSMITH_BROLL_OFFLINE"] = "1"
+
     cfg = Config()
-    sfx_map = sfx.load_sfx_map()
-    if not sfx_map:
-        log.error("No SFX pack found. Run scripts/build_sfx_pack.py first.")
+    sfx_map = sfx.load_sfx_map() if not args.skip_sfx else {}
+    if not args.skip_sfx and not sfx_map:
+        log.error("No SFX pack found. Run scripts/build_sfx_pack.py first, "
+                  "or pass --skip-sfx to consolidate the Hyperframes render directly.")
         return 1
-    log.info("SFX slots: %s", ", ".join(f"{k}x{len(v)}" for k, v in sorted(sfx_map.items())))
+    if sfx_map:
+        log.info("SFX slots: %s",
+                 ", ".join(f"{k}x{len(v)}" for k, v in sorted(sfx_map.items())))
+
     style = os.environ.get("SHORTSMITH_STYLE", "xrp-revolution")
-    phase0_remotion(style)
-    phase1_sfx(cfg, sfx_map)
+    if args.skip_remotion:
+        log.info("Phase 0 skipped (--skip-remotion). SFX/consolidate will use Hyperframes base renders.")
+    else:
+        phase0_remotion(style)
+
+    if args.skip_sfx:
+        log.info("Phase 1 skipped (--skip-sfx). Going straight to consolidation.")
+    else:
+        phase1_sfx(cfg, sfx_map)
+
     n = phase2_consolidate()
-    log.info("FINALIZE COMPLETE. %d shorts with SFX in %s", n, ALL_DIR)
+    log.info("FINALIZE COMPLETE. %d shorts consolidated to %s", n, ALL_DIR)
     return 0
 
 

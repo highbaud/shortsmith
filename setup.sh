@@ -32,11 +32,19 @@ fi
 echo "[5/6] Syncing main shortsmith venv (this can take a minute on first run)..."
 uv sync
 
-echo "[6/6] Syncing audio-enhance venv (ClearerVoice + torch)..."
+echo "[6/7] Syncing audio-enhance venv (ClearerVoice + torch)..."
 if [ -d "audio-enhance" ]; then
     ( cd audio-enhance && uv sync )
 else
     echo "WARN: audio-enhance/ not found. Skipping. (You can still run with --no-enhance.)"
+fi
+
+echo "[7/7] Syncing whisperx-align venv (WhisperX + torch 2.8.0+cu128)..."
+if [ -d "whisperx-align" ]; then
+    ( cd whisperx-align && uv sync ) || \
+      echo "WARN: whisperx-align sync failed. Step 6 will fall back to faster-whisper retranscribe."
+else
+    echo "WARN: whisperx-align/ not found. Skipping. (Step 6 falls back to faster-whisper retranscribe.)"
 fi
 
 if [ ! -f .env ]; then

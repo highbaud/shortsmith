@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] — Unreleased
+
+### Added
+- **`shortsmith doctor`** — new CLI command that prints a green/red health
+  checklist (ffmpeg, uv, npm, sibling venvs, Hyperframes kit, Remotion node_modules,
+  SFX pack, YuNet model, API key). Returns non-zero exit if any required check
+  fails. Run after `setup.sh` or when a pipeline misbehaves.
+- **Network hardening in `scripts/gen_broll.py`**: on-disk cache
+  (`.cache/broll-fetch/<sha1>.<ext>`), polite throttle (≥0.5s between hits with
+  jitter), exponential backoff on 429/503, identifying User-Agent
+  (`shortsmith/0.5 (+https://github.com/highbaud/shortsmith)`). New CLI flags
+  `--offline` and `--no-cache`. Env vars `SHORTSMITH_BROLL_OFFLINE` and
+  `SHORTSMITH_BROLL_NOCACHE`. Catches the rate-limit cliff a 1000-clip reprocess
+  would otherwise trip on.
+- **`scripts/finalize.py --skip-remotion` and `--skip-sfx` flags** plus
+  `--offline`. Phase failures stay non-fatal (one short failing Remotion no
+  longer kills the run).
+- **`whisperx-align/` bundled in-tree** as a sibling uv project (same pattern
+  as `audio-enhance/`). `setup.sh` / `setup.ps1` now `uv sync` it too. Public
+  clones get the WhisperX quality improvement instead of silently falling back
+  to faster-whisper.
+- **14 new tests** — 8 for the gen_broll HTTP layer (cache hits, offline,
+  nocache, retry on 429, fail-fast on 404, etc.) and 6 for finalize.py arg
+  handling (--skip-remotion / --skip-sfx / --offline routing, empty pack
+  error path). Total now 45 tests, still <0.5s.
+
+### Changed
+- **README rewritten** for v0.4+ reality. Shows the actual 11-phase pipeline
+  (Phase A clip selection → Phase B audio/alignment/face → Phase C
+  scaffold/render/caption/b-roll/SFX) and the `finalize.py` deliverable.
+- **docs/ARCHITECTURE.md rewritten** with the 11-phase breakdown, including
+  the asymmetric boundary snap, stutter repair, loudnorm pass, biggest-face-wins
+  reframe, Remotion + SFX layers, and crash-recovery checkpoints.
+- **docs/SFX.md and docs/REMOTION.md** added — subsystem-level docs.
+- `.gitignore` excludes `whisperx-align/.venv/`, `whisperx-align/checkpoints/`,
+  and the new `.cache/` directory.
+
 ## [0.4.0] — Unreleased
 
 ### Added
