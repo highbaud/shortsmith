@@ -3,23 +3,36 @@
     "swipe-in-1.wav",
     "swipe-in-2.wav",
     "swipe-in-3.wav",
-    "swipe-in-4.wav"
+    "swipe-in-4.wav",
+    "swipe-in-5.wav",
+    "swipe-in-6.wav",
+    "swipe-in-7.wav"
   ],
   "swipe-out": [
     "swipe-out-1.wav",
-    "swipe-out-2.wav"
+    "swipe-out-2.wav",
+    "swipe-out-3.wav"
   ],
   "hook-impact": [
-    "hook-impact-1.wav"
+    "hook-impact-1.wav",
+    "hook-impact-2.wav",
+    "hook-impact-3.wav",
+    "hook-impact-4.wav"
   ],
   "cash-register": [
     "cash-register-1.wav"
   ],
   "ding": [
     "ding-1.wav",
-    "ding-2.wav"
+    "ding-2.wav",
+    "ding-3.wav",
+    "ding-4.wav",
+    "ding-5.wav",
+    "ding-6.wav"
   ],
   "whoosh": [
-    "whoosh-1.wav"
+    "whoosh-1.wav",
+    "whoosh-2.wav",
+    "whoosh-3.wav"
   ]
 }

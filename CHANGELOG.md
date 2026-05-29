@@ -17,6 +17,13 @@ All notable changes to this project will be documented in this file.
   per file, and writes `assets/sfx/index.json` (structured) +
   `assets/sfx/CATALOG.md` (human-readable, grouped by slot). Makes
   choosing which raw drop fills which slot a lookup rather than a listen.
+- **Expanded SFX pack** — `scripts/build_sfx_pack.py` curation now ships
+  24 normalized variants (was 11), informed by the new index:
+  swipe-in 7 (+3 whip cracks), swipe-out 3 (+1 cleaner whip), hook-impact
+  4 (+ camera-whoosh / long whoosh / riser-to-notification),
+  ding 6 (+ beep / pop / 2 UI taps), whoosh 3 (+ click-to-whoosh / long).
+  Much more rotation variety across long batches — the same callout slam
+  no longer fires the same hit 5 times in a row.
 
 ### Changed
 - `.gitignore` excludes `.claude/` (local Claude Code session state).

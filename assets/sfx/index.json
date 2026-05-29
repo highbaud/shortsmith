@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-29T04:18:42+00:00",
+  "generated_at": "2026-05-29T04:21:59+00:00",
   "root": "F:/Claude Code/shortsmith/assets/sfx",
   "slot_definitions": {
     "swipe-in": {
@@ -821,6 +821,78 @@
       ]
     },
     {
+      "path": "pack/ding-3.wav",
+      "filename": "ding-3.wav",
+      "location": "pack",
+      "size_bytes": 22668,
+      "duration_s": 0.117,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -20.0,
+      "category": "ding",
+      "duration_bucket": "very-short",
+      "loudness_bucket": "normal",
+      "description": "very-short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-4.wav",
+      "filename": "ding-4.wav",
+      "location": "pack",
+      "size_bytes": 79258,
+      "duration_s": 0.412,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -12.0,
+      "mean_dbfs": -32.5,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "soft",
+      "description": "short soft ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-5.wav",
+      "filename": "ding-5.wav",
+      "location": "pack",
+      "size_bytes": 68006,
+      "duration_s": 0.354,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -31.8,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-6.wav",
+      "filename": "ding-6.wav",
+      "location": "pack",
+      "size_bytes": 71082,
+      "duration_s": 0.37,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -31.1,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
       "path": "pack/hook-impact-1.wav",
       "filename": "hook-impact-1.wav",
       "location": "pack",
@@ -834,6 +906,60 @@
       "duration_bucket": "medium",
       "loudness_bucket": "normal",
       "description": "medium normal impact",
+      "suggested_slots": [
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/hook-impact-2.wav",
+      "filename": "hook-impact-2.wav",
+      "location": "pack",
+      "size_bytes": 169042,
+      "duration_s": 0.88,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -26.7,
+      "category": "impact",
+      "duration_bucket": "medium",
+      "loudness_bucket": "normal",
+      "description": "medium normal impact",
+      "suggested_slots": [
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/hook-impact-3.wav",
+      "filename": "hook-impact-3.wav",
+      "location": "pack",
+      "size_bytes": 368778,
+      "duration_s": 1.92,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -26.6,
+      "category": "impact",
+      "duration_bucket": "long",
+      "loudness_bucket": "normal",
+      "description": "long normal impact",
+      "suggested_slots": [
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/hook-impact-4.wav",
+      "filename": "hook-impact-4.wav",
+      "location": "pack",
+      "size_bytes": 392878,
+      "duration_s": 2.046,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -24.2,
+      "category": "impact",
+      "duration_bucket": "long",
+      "loudness_bucket": "normal",
+      "description": "long normal impact",
       "suggested_slots": [
         "hook-impact"
       ]
@@ -922,6 +1048,68 @@
       ]
     },
     {
+      "path": "pack/swipe-in-5.wav",
+      "filename": "swipe-in-5.wav",
+      "location": "pack",
+      "size_bytes": 37826,
+      "duration_s": 0.196,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -25.0,
+      "category": "whoosh",
+      "duration_bucket": "very-short",
+      "loudness_bucket": "normal",
+      "description": "very-short normal whoosh",
+      "suggested_slots": [
+        "whoosh",
+        "swipe-in",
+        "swipe-out"
+      ]
+    },
+    {
+      "path": "pack/swipe-in-6.wav",
+      "filename": "swipe-in-6.wav",
+      "location": "pack",
+      "size_bytes": 43922,
+      "duration_s": 0.228,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -24.3,
+      "category": "whoosh",
+      "duration_bucket": "very-short",
+      "loudness_bucket": "normal",
+      "description": "very-short normal whoosh",
+      "suggested_slots": [
+        "whoosh",
+        "swipe-in",
+        "swipe-out",
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/swipe-in-7.wav",
+      "filename": "swipe-in-7.wav",
+      "location": "pack",
+      "size_bytes": 52058,
+      "duration_s": 0.27,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -28.7,
+      "category": "whoosh",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal whoosh",
+      "suggested_slots": [
+        "whoosh",
+        "swipe-in",
+        "swipe-out",
+        "hook-impact"
+      ]
+    },
+    {
       "path": "pack/swipe-out-1.wav",
       "filename": "swipe-out-1.wav",
       "location": "pack",
@@ -964,6 +1152,27 @@
       ]
     },
     {
+      "path": "pack/swipe-out-3.wav",
+      "filename": "swipe-out-3.wav",
+      "location": "pack",
+      "size_bytes": 44942,
+      "duration_s": 0.234,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -24.5,
+      "category": "whoosh",
+      "duration_bucket": "very-short",
+      "loudness_bucket": "normal",
+      "description": "very-short normal whoosh",
+      "suggested_slots": [
+        "whoosh",
+        "swipe-in",
+        "swipe-out",
+        "hook-impact"
+      ]
+    },
+    {
       "path": "pack/whoosh-1.wav",
       "filename": "whoosh-1.wav",
       "location": "pack",
@@ -979,6 +1188,45 @@
       "description": "medium normal whoosh",
       "suggested_slots": [
         "whoosh",
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/whoosh-2.wav",
+      "filename": "whoosh-2.wav",
+      "location": "pack",
+      "size_bytes": 155110,
+      "duration_s": 0.807,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -30.1,
+      "category": "whoosh",
+      "duration_bucket": "medium",
+      "loudness_bucket": "normal",
+      "description": "medium normal whoosh",
+      "suggested_slots": [
+        "whoosh",
+        "swipe-in",
+        "swipe-out",
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/whoosh-3.wav",
+      "filename": "whoosh-3.wav",
+      "location": "pack",
+      "size_bytes": 368778,
+      "duration_s": 1.92,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -26.6,
+      "category": "whoosh",
+      "duration_bucket": "long",
+      "loudness_bucket": "normal",
+      "description": "long normal whoosh",
+      "suggested_slots": [
         "hook-impact"
       ]
     },

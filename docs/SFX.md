@@ -20,14 +20,17 @@ Non-destructive — writes `<project>/renders/final_sfx.mp4` beside the input. R
 
 Lives at `assets/sfx/pack/` with `pack.json` mapping each slot to one or more variant files (the mixer rotates through variants for variety so identical hits never repeat).
 
-| Slot | When it fires | Default level |
-|---|---|---|
-| `hook-impact` | Once at t=0, on the opening slam | -9 dBFS (peak), 0.7 × sfx_gain |
-| `swipe-in` | At each callout's `local_start` | 0.55 × sfx_gain |
-| `swipe-out` | At each callout's end (opt-in via `sfx_swipe_out=True`) | 0.45 × sfx_gain |
-| `cash-register` | First time a money word is spoken in the clip | 0.85 × sfx_gain |
-| `ding` | On each `bigstat` callout whose text has a number or `$` | 0.7 × sfx_gain |
-| `whoosh` | Fallback for generic transitions | 0.55 × sfx_gain |
+| Slot | When it fires | Variants (shipped) | Default level |
+|---|---|---|---|
+| `hook-impact` | Once at t=0, on the opening slam | 4 | -9 dBFS (peak), 0.7 × sfx_gain |
+| `swipe-in` | At each callout's `local_start` | 7 | 0.55 × sfx_gain |
+| `swipe-out` | At each callout's end (opt-in via `sfx_swipe_out=True`) | 3 | 0.45 × sfx_gain |
+| `cash-register` | First time a money word is spoken in the clip | 1 | 0.85 × sfx_gain |
+| `ding` | On each `bigstat` callout whose text has a number or `$` | 6 | 0.7 × sfx_gain |
+| `whoosh` | Fallback for generic transitions | 3 | 0.55 × sfx_gain |
+
+Variants rotate per call (see `_VariantRotation` in `shortsmith/sfx.py`)
+so a clip with 5 callouts cycles through 5 different swipe-in sounds.
 
 Global gain: `sfx_gain = 0.7` by default (`SHORTSMITH_SFX_GAIN`).
 

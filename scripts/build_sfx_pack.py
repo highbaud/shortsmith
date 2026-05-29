@@ -31,29 +31,59 @@ TARGET_PEAK_DB = -9.0   # normalize every one-shot to this peak
 
 # slot -> list of (raw filename in SFX_DIR, output variant basename)
 # Order matters: variants rotate in this order across repeated uses.
+#
+# Curated using `scripts/build_sfx_index.py` (see assets/sfx/CATALOG.md).
+# Picks favor clean source peaks (-0 to -9 dBFS), tight transients, and
+# enough variety per slot that the rotation feels non-repetitive across a
+# multi-callout clip without ever crowding the speech bed.
 CURATION: dict[str, list[tuple[str, str]]] = {
+    # swipe-in: callout slam-ins. Whip cracks + short whooshes — tight 0.2–0.4s
+    # transients. Rotating between whoosh + whip families keeps long batches
+    # from feeling stamped out.
     "swipe-in": [
         ("Short Whoosh.wav",  "swipe-in-1.wav"),
         ("Short Whoosh2.wav", "swipe-in-2.wav"),
         ("Short Whoosh3.wav", "swipe-in-3.wav"),
         ("whip whoosh.wav",   "swipe-in-4.wav"),
+        ("whip3.wav",         "swipe-in-5.wav"),
+        ("whip6.wav",         "swipe-in-6.wav"),
+        ("whip4.wav",         "swipe-in-7.wav"),
     ],
+    # swipe-out: softer / shorter than swipe-in. Reverse-feel whooshes + a
+    # cleaner whip alternative.
     "swipe-out": [
         ("Short Whoosh3.wav", "swipe-out-1.wav"),
         ("Short Whoosh.wav",  "swipe-out-2.wav"),
+        ("whip5.mp3",         "swipe-out-3.wav"),
     ],
+    # hook-impact: big at t=0. Bodied camera-whoosh hits + a longer riser
+    # variant for clips that breathe before the first beat lands.
     "hook-impact": [
-        ("CameraWhoosh1.wav", "hook-impact-1.wav"),
+        ("CameraWhoosh1.wav",         "hook-impact-1.wav"),
+        ("CameraWhoosh.wav",          "hook-impact-2.wav"),
+        ("Long Whoosh.wav",           "hook-impact-3.wav"),
+        ("Riser to Notification.wav", "hook-impact-4.wav"),
     ],
+    # cash-register: iconic kaching, single sample is plenty (only fires once
+    # per clip on the first money word).
     "cash-register": [
         ("cash register kaching.mp3", "cash-register-1.wav"),
     ],
+    # ding: bigstat number reveal. Mix of pitched bells + bright UI taps so a
+    # clip with 3 bigstats doesn't ring the same bell three times.
     "ding": [
         ("bell ding1.wav",  "ding-1.wav"),
         ("anime shine.mp3", "ding-2.wav"),
+        ("beep1.wav",       "ding-3.wav"),
+        ("pop1.wav",        "ding-4.wav"),
+        ("icon_03.wav",     "ding-5.wav"),
+        ("icon_14.wav",     "ding-6.wav"),
     ],
+    # whoosh: generic transition fallback. Longer / smoother than swipe-in.
     "whoosh": [
-        ("CameraWhoosh.wav", "whoosh-1.wav"),
+        ("CameraWhoosh.wav",      "whoosh-1.wav"),
+        ("Click to Whoosh.wav",   "whoosh-2.wav"),
+        ("Long Whoosh.wav",       "whoosh-3.wav"),
     ],
 }
 
