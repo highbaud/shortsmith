@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from shortsmith import sfx
@@ -74,7 +75,29 @@ def find_render(work_slug: str, rank: int) -> tuple[Path, Path] | None:
     return None
 
 
-def phase0_remotion(style: str) -> int:
+def _clear_remotion_cache() -> None:
+    """Delete Remotion's webpack bundle + asset caches so the first render of the
+    run recompiles remotion/src from scratch.
+
+    Remotion reuses a persistent compiled bundle in %TEMP%/remotion-* and
+    remotion/node_modules/.cache. It honors fresh inputProps every render but can
+    silently keep STALE compiled .tsx — so a caption/transition code change won't
+    take effect until the cache is cleared. Clearing once up front means every
+    short in this run renders with the current code. (See PROJECT_STATE bundle
+    gotcha — this cost ~5 renders to diagnose.)
+    """
+    removed = 0
+    for d in Path(tempfile.gettempdir()).glob("remotion-*"):
+        shutil.rmtree(d, ignore_errors=True)
+        removed += 1
+    cache = SHORTSMITH_ROOT / "remotion" / "node_modules" / ".cache"
+    if cache.exists():
+        shutil.rmtree(cache, ignore_errors=True)
+        removed += 1
+    log.info("Cleared %d Remotion cache dir(s) so captions/transitions recompile fresh", removed)
+
+
+def phase0_remotion(style: str, force: bool = False) -> int:
     """Layer Remotion captions + auto b-roll onto every scaffolded short."""
     sys.path.insert(0, str(SHORTSMITH_ROOT / "scripts"))
     try:
@@ -82,6 +105,7 @@ def phase0_remotion(style: str) -> int:
     except Exception as e:  # noqa: BLE001
         log.error("Cannot import apply_remotion (%s); skipping Remotion phase", e)
         return 0
+    _clear_remotion_cache()  # once per run, before the first render bundles
     applied = skipped = 0
     for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
         if not src_dir.is_dir():
@@ -90,7 +114,7 @@ def phase0_remotion(style: str) -> int:
             if not proj.is_dir():
                 continue
             try:
-                out = ar.apply_remotion(proj, style=style)
+                out = ar.apply_remotion(proj, style=style, force=force)
             except Exception as e:  # noqa: BLE001 - one short shouldn't sink the run
                 log.warning("  Remotion failed for %s: %s", proj.name, e)
                 out = None
@@ -151,9 +175,24 @@ def phase1_sfx(cfg: Config, sfx_map) -> int:
     return applied
 
 
+def _qa_streams(p: Path) -> tuple[bool, int, int]:
+    """Quick QA probe: (has_audio, width, height). Cheap ffprobe, ~50ms."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries",
+             "stream=codec_type,width,height", "-of", "json", str(p)],
+            check=True, capture_output=True, text=True)
+        streams = json.loads(out.stdout).get("streams", [])
+        has_audio = any(s.get("codec_type") == "audio" for s in streams)
+        vid = next((s for s in streams if s.get("codec_type") == "video"), {})
+        return has_audio, int(vid.get("width", 0) or 0), int(vid.get("height", 0) or 0)
+    except Exception:
+        return False, 0, 0
+
+
 def phase2_consolidate() -> int:
     ALL_DIR.mkdir(parents=True, exist_ok=True)
-    copied = 0
+    copied = bad = 0
     for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
         if not src_dir.is_dir():
             continue
@@ -164,12 +203,19 @@ def phase2_consolidate() -> int:
             if not sfx_mp4.exists():
                 continue
             base = f"{src_dir.name}__{proj.name}"
+            # QA: a deliverable must have audio and be a 1080x1920 vertical video.
+            has_audio, w, h = _qa_streams(sfx_mp4)
+            if not has_audio or (w, h) != (1080, 1920):
+                log.warning("  QA FAIL %s: has_audio=%s dims=%dx%d (still consolidating)",
+                            base, has_audio, w, h)
+                bad += 1
             shutil.copy(sfx_mp4, ALL_DIR / f"{base}.mp4")
             cap = proj / "caption.txt"
             if cap.exists():
                 shutil.copy(cap, ALL_DIR / f"{base}.txt")
             copied += 1
-    log.info("Phase 2 done: consolidated %d shorts -> %s", copied, ALL_DIR)
+    log.info("Phase 2 done: consolidated %d shorts -> %s (%d QA warnings)",
+             copied, ALL_DIR, bad)
     return copied
 
 
@@ -193,6 +239,12 @@ def main() -> int:
         help="Force Phase 0 (if not skipped) to use the on-disk b-roll fetch cache only; "
              "no live HTTP to Commons / Openverse / Wikipedia.",
     )
+    ap.add_argument(
+        "--force-remotion", action="store_true",
+        help="Re-render every short's captions/b-roll even if final_remotion.mp4 looks "
+             "up to date. Use after changing Remotion/caption code without re-rendering "
+             "the Hyperframes base (the bundle cache is always cleared regardless).",
+    )
     args = ap.parse_args()
 
     if args.offline:
@@ -212,7 +264,7 @@ def main() -> int:
     if args.skip_remotion:
         log.info("Phase 0 skipped (--skip-remotion). SFX/consolidate will use Hyperframes base renders.")
     else:
-        phase0_remotion(style)
+        phase0_remotion(style, force=args.force_remotion)
 
     if args.skip_sfx:
         log.info("Phase 1 skipped (--skip-sfx). Going straight to consolidation.")

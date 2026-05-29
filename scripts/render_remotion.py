@@ -159,6 +159,29 @@ _BOTTOM_UI_LIMIT = {"tiktok": 0.86, "instagram": 0.84, "youtube": 0.90, "generic
 _TOP_LIMIT = 0.05
 
 
+def _choose_band(face_top: float, face_bottom: float, platform: str) -> dict:
+    """Pure band-selection given the face's vertical extent (fractions of frame
+    height). Below the chin if the band fits above the bottom-UI limit, else
+    above the head if it clears the top edge, else the static platform band.
+
+    Split out from _face_aware_band so the geometry is unit-testable without a
+    video / OpenCV.
+    """
+    default = PLATFORM_BANDS.get(platform, PLATFORM_BANDS["generic"])
+    bottom_limit = _BOTTOM_UI_LIMIT.get(platform, _BOTTOM_UI_LIMIT["generic"])
+
+    below_top = face_bottom + _BAND_GAP
+    if below_top + _BAND_H <= bottom_limit:
+        return {"top": round(below_top, 4), "bottom": round(below_top + _BAND_H, 4)}
+
+    above_bottom = face_top - _BAND_GAP
+    above_top = above_bottom - _BAND_H
+    if above_top >= _TOP_LIMIT:
+        return {"top": round(above_top, 4), "bottom": round(above_bottom, 4)}
+
+    return default  # face fills the frame — no clean spot, keep default
+
+
 def _face_aware_band(base_abs: Path, platform: str) -> dict:
     """Pick a caption safe-band that avoids the speaker's face.
 
@@ -222,20 +245,9 @@ def _face_aware_band(base_abs: Path, platform: str) -> dict:
 
     # 80th pct chin (respects downward head moves without chasing one outlier);
     # 20th pct hairline for the above-head option.
-    face_bottom = pct(bottoms, 0.80)
-    face_top = pct(tops, 0.20)
-    bottom_limit = _BOTTOM_UI_LIMIT.get(platform, _BOTTOM_UI_LIMIT["generic"])
-
-    below_top = face_bottom + _BAND_GAP
-    if below_top + _BAND_H <= bottom_limit:
-        return {"top": round(below_top, 4), "bottom": round(below_top + _BAND_H, 4)}
-
-    above_bottom = face_top - _BAND_GAP
-    above_top = above_bottom - _BAND_H
-    if above_top >= _TOP_LIMIT:
-        return {"top": round(above_top, 4), "bottom": round(above_bottom, 4)}
-
-    return default  # face fills the frame — no clean spot, keep default
+    # 80th pct chin (respects downward head moves without chasing one outlier);
+    # 20th pct hairline for the above-head option.
+    return _choose_band(pct(tops, 0.20), pct(bottoms, 0.80), platform)
 
 
 def _drop_fillers(words: list[dict]) -> list[dict]:
