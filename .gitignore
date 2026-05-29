@@ -42,6 +42,9 @@ work/
 .DS_Store
 Thumbs.db
 
+# Claude Code local session state (skills, etc.)
+.claude/
+
 # Build artifacts
 dist/
 build/

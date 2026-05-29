@@ -204,17 +204,68 @@ def _gen_claude(words: list[dict], gaps: list[tuple[float, float]]) -> list[dict
 # --------------------------------------------------------------------------- #
 # Small curated maps — only well-known marks/people get auto slides offline.
 KNOWN_BRANDS = {
+    # Crypto assets / protocols
     "ripple": "Ripple", "xrp": "Ripple", "bitcoin": "Bitcoin", "btc": "Bitcoin",
-    "ethereum": "Ethereum", "eth": "Ethereum", "coinbase": "Coinbase",
-    "binance": "Binance", "tesla": "Tesla", "apple": "Apple", "solana": "Solana",
-    "cardano": "Cardano", "paypal": "PayPal", "visa": "Visa", "mastercard": "Mastercard",
+    "ethereum": "Ethereum", "eth": "Ethereum", "solana": "Solana", "cardano": "Cardano",
+    "stellar": "Stellar", "xlm": "Stellar", "hedera": "Hedera", "hbar": "Hedera",
+    "chainlink": "Chainlink", "dogecoin": "Dogecoin", "litecoin": "Litecoin",
+    "quant": "Quant", "xdc": "XDC", "flare": "Flare",
+    # Stablecoins
+    "tether": "Tether", "usdt": "Tether", "usdc": "Circle",
+    # Exchanges / custodians / brokers
+    "coinbase": "Coinbase", "binance": "Binance", "kraken": "Kraken",
+    "robinhood": "Robinhood", "anchorage": "Anchorage", "uphold": "Uphold",
+    # TradFi / asset managers / payments
+    "blackrock": "BlackRock", "microstrategy": "MicroStrategy", "fidelity": "Fidelity",
+    "jpmorgan": "JPMorgan", "jp morgan": "JPMorgan", "berkshire": "Berkshire Hathaway",
+    "ark invest": "ARK Invest", "vanguard": "Vanguard",
+    "paypal": "PayPal", "visa": "Visa", "mastercard": "Mastercard",
+    "western union": "Western Union",
+    # NOTE: "swift" deliberately omitted — the logo source returns Apple's Swift
+    # programming-language icon, not the SWIFT interbank network. Ambiguous brand
+    # words that collide with a tech icon (swift, etc.) are left out so we never
+    # show a confidently-wrong logo.
+    # Big tech
+    "tesla": "Tesla", "apple": "Apple", "nvidia": "Nvidia", "microsoft": "Microsoft",
+    "amazon": "Amazon", "google": "Google", "meta": "Meta", "facebook": "Meta",
+    "spacex": "SpaceX", "starlink": "Starlink",
 }
 KNOWN_PEOPLE = {
+    # Ripple / XRP
     "brad garlinghouse": ("Brad Garlinghouse", "CEO, Ripple"),
-    "elon musk": ("Elon Musk", "CEO, Tesla"),
+    "david schwartz": ("David Schwartz", "CTO, Ripple"),
+    "chris larsen": ("Chris Larsen", "Co-founder, Ripple"),
+    "jed mccaleb": ("Jed McCaleb", "Co-founder, Ripple"),
+    # Crypto founders / execs
     "michael saylor": ("Michael Saylor", "Chairman, MicroStrategy"),
     "vitalik buterin": ("Vitalik Buterin", "Co-founder, Ethereum"),
     "satoshi nakamoto": ("Satoshi Nakamoto", "Creator of Bitcoin"),
+    "brian armstrong": ("Brian Armstrong", "CEO, Coinbase"),
+    "changpeng zhao": ("Changpeng Zhao", "Founder, Binance"),
+    # Wall Street / asset managers / TradFi
+    "larry fink": ("Larry Fink", "CEO, BlackRock"),
+    "warren buffett": ("Warren Buffett", "CEO, Berkshire Hathaway"),
+    "jamie dimon": ("Jamie Dimon", "CEO, JPMorgan"),
+    "cathie wood": ("Cathie Wood", "CEO, ARK Invest"),
+    "michael burry": ("Michael Burry", "Founder, Scion Capital"),
+    "peter schiff": ("Peter Schiff", "Economist & Gold Bull"),
+    "jim rickards": ("Jim Rickards", "Economist & Author"),
+    # Policy / government
+    "donald trump": ("Donald Trump", "President of the United States"),
+    "jerome powell": ("Jerome Powell", "Chair, Federal Reserve"),
+    "gary gensler": ("Gary Gensler", "Former Chair, SEC"),
+    "scott bessent": ("Scott Bessent", "U.S. Treasury Secretary"),
+    "nayib bukele": ("Nayib Bukele", "President of El Salvador"),
+    # Tech founders
+    "elon musk": ("Elon Musk", "CEO, Tesla & SpaceX"),
+    "jensen huang": ("Jensen Huang", "CEO, Nvidia"),
+    "jeff bezos": ("Jeff Bezos", "Founder, Amazon"),
+    "mark zuckerberg": ("Mark Zuckerberg", "CEO, Meta"),
+    # Finance personalities / authors
+    "kevin o'leary": ("Kevin O'Leary", "Investor, Shark Tank"),
+    "robert kiyosaki": ("Robert Kiyosaki", "Author, Rich Dad Poor Dad"),
+    "jordan belfort": ("Jordan Belfort", "The Wolf of Wall Street"),
+    "patrick bet-david": ("Patrick Bet-David", "Founder, Valuetainment"),
 }
 def _gen_heuristic(words: list[dict], gaps: list[tuple[float, float]], cap: int) -> list[dict]:
     # NOTE: stat slides are intentionally NOT generated — numbers/stats are left

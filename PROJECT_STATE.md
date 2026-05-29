@@ -56,6 +56,78 @@ B-roll decisions (memory: shortsmith_broll_decisions.md): Claude+heuristic engin
 full-color->mono logos, multi-source CC person photos (Commons/Openverse/Wikipedia,
 shuffled), no credit. Captions default ON (word captions); `--no-captions` to disable.
 
+### CAPTION STYLE (user-approved 2026-05-28) — DONE, in remotion/src/Short.tsx
+- Font: **Anton** via `@remotion/google-fonts/Anton` (loadFont()). robust loader:
+  delayRender + waitUntilDone() so headless render never flashes fallback font.
+- Active-word highlight + pop: spoken-now word = palette.primary (gold) scaling
+  1.0->1.14; already-spoken = solid white; not-yet-spoken = rgba(255,255,255,0.5).
+- NO background pill — only layered 8-dir black text-shadow outline + soft shadow.
+- `Captions` needs `palette` prop (wired in Short.tsx). render_remotion.py passes it.
+- Tighter chunks: render_remotion.py `captionMaxWords` = 3 (was 4).
+- um/uh filter: render_remotion.py `_drop_fillers()` strips standalone
+  um/uh/uhm/umm/uhh/erm/mm/mmm/hmm (punctuation-stripped match) from caption words
+  BEFORE render (audio untouched). Verified catches 394 fillers across 352 word files.
+- Test render output name: final_remotion_test.mp4 (keep separate from final_remotion.mp4).
+- FACE-AWARE CAPTION BAND (user req 2026-05-28) — render_remotion._face_aware_band():
+  samples 12 frames of the base render, runs YuNet (cfg.yunet_model_path), takes
+  80th-pct chin + 20th-pct hairline, places the band BELOW the chin (gap 0.025,
+  height 0.13) if it fits above the platform bottom-UI limit (generic 0.88), ELSE
+  ABOVE the head, ELSE falls back to the static PLATFORM_BANDS. Per-short, only
+  when captions on. Verified: april-14 short-01 face chin ~0.71 -> band moved
+  from fixed [0.60,0.80] to [0.74,0.87], captions now clear the face all clip.
+- Word spacing: per-span longhand `marginLeft/Right: 28` + `marginTop/Bottom: 8`
+  (NOT flex `gap`, NOT the `margin` shorthand string — see bundle gotcha below).
+  28px is tuned for the 96px Anton glyphs; verified reads cleanly ("the maximum
+  across" separated, active words gold). fontSize back to 96 (48 was a test).
+- BUNDLE STALENESS — THE REAL GOTCHA (cost ~5 renders): `npx remotion render`
+  was reusing a STALE compiled bundle, so Short.tsx edits silently no-op'd while
+  inputProps still updated. Clearing `remotion-webpack-bundle-*` +
+  `node_modules/.cache` was NOT enough. The fix that worked: also delete the
+  `remotion-v4.0.468-assets*` dirs — i.e. nuke ALL of them:
+    `rm -rf "$TEMP"/remotion-* remotion/node_modules/.cache`
+  Proven by a fontSize 96->48 test: only after the full nuke did the frame change
+  (text shrank AND words finally spaced). ALWAYS full-nuke before rendering after
+  any remotion/src edit. Within one finalize run, one nuke up front suffices.
+  (The space-separated shorthand theory was a red herring — longhand just happened
+  to be the edit present when the cache was finally fully cleared.)
+
+### REMOTION BUNDLE CACHE GOTCHA (critical — cost ~4 renders to find)
+`npx remotion render` reuses a persistent webpack bundle at
+`%TEMP%/remotion-webpack-bundle-*`. It picks up inputProps changes every render
+but does NOT always recompile edited .tsx source — so Short.tsx code edits can
+silently no-op while props (captionMaxWords etc.) still update. After ANY edit to
+remotion/src/*, clear the cache before rendering:
+  `rm -rf "$TEMP"/remotion-webpack-bundle-* remotion/node_modules/.cache`
+Within a single finalize run the code is fixed, so one clear up front is enough.
+
+### CAPTION TEXT FILES — no hashtags + slop-checked (user req 2026-05-28) DONE
+- shortsmith/scaffold.py: `_strip_hashtags()` removes all #tags + tidies blank
+  lines; applied to caption_text; `_fallback_caption` no longer emits hashtags.
+- prompts/find_viral_clips.md: caption section now says NO hashtags + AI-slop
+  guardrails (no binary contrasts/triples/infomercial hooks/thesaurus words).
+  NOTE: prompt only affects FUTURE find_clips runs; backlog instagram_caption
+  text is already in clips.json (step 2 not re-run by reprocess).
+- scripts/clean_captions.py: idempotent walker, strips hashtags from existing
+  caption .txt (per-source <short>.txt, per-project caption.txt, _all/*.txt).
+  RAN 2026-05-28: cleaned all 704 files. Re-run after finalize to catch _all/.
+- Ran /ai-slop-detector on sample captions: both Low slop (good). Only the
+  hashtag block was the issue.
+- BUNDLED the ai-slop-detector skill into the repo at
+  `.claude/skills/ai-slop-detector/` (SKILL.md + references/slop-patterns.md,
+  self-contained, no external license). Tracked by git (not ignored), so anyone
+  who clones the repo + opens it in Claude Code gets `/ai-slop-detector` free.
+  TODO at packaging: mention it in README (e.g. "polish caption text with
+  /ai-slop-detector before posting").
+
+### "START OVER" FOR FINAL VERSIONS (user req) — TODO at finalize time
+User wants every final video rebuilt so all get the premium captions (Anton +
+active-word gold + 3-word chunks + margins + no um/uh). apply_remotion skips a
+short when final_remotion.mp4 is newer than its Hyperframes base, so the ~28
+pre-Remotion shorts + any already-done need a FORCED caption re-render. When
+running finalize after reprocess_all: clear the remotion bundle cache first,
+then force Phase 0 to re-render all (apply_remotion --force / clear stale
+final_remotion.mp4). Verify a frame before committing the full batch.
+
 ## NEXT STEP after reprocess_all finishes (THE FINAL VERSION)
 Run ONE command: `uv run python scripts/finalize.py` — 3 phases:
   Phase 0 (Remotion): layer captions + auto b-roll on every short -> final_remotion.mp4.
