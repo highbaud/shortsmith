@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 ## [0.6.0] — Unreleased
 
 ### Added
+- **Token-paste guardrail (pre-commit hooks).** `setup.sh` / `setup.ps1` now
+  install `pre-commit` + Yelp's `detect-secrets` + a custom
+  `scripts/check_no_tokens.py` scanner that catches Metricool OAuth client
+  IDs, bare Bearer tokens, and Anthropic key shapes detect-secrets' built-in
+  plugins miss. Every staged file (and the commit message itself) is scanned
+  before each commit — token-shaped strings fail the commit locally, so a
+  credential never reaches GitHub. Inline opt-out per-line via
+  `# pragma: allowlist secret` for legitimate examples. New dev deps:
+  `pre-commit>=3.7`, `detect-secrets>=1.5`. New files: `.pre-commit-config.yaml`,
+  `.secrets.baseline`, `scripts/check_no_tokens.py`. `.gitignore` extended
+  for the upcoming Metricool publish phase's local state files.
 - **Visual transitions (VFX) layer** in Remotion — Capcut-style **Glare**
   (diagonal light sweep across the frame), **ZoomPunch** (~4% scale bump,
   bell-curve eased), and **Flash** (~90ms full-frame color tint).

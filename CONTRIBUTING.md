@@ -9,11 +9,30 @@ into something more useful than expected. PRs welcome.
 git clone --recurse-submodules https://github.com/highbaud/shortsmith
 cd shortsmith
 ./setup.sh           # or .\setup.ps1 on Windows
-uv sync --extra dev  # installs ruff, pytest, pytest-mock
+uv sync --extra dev  # installs ruff, pytest, pytest-mock, pre-commit, detect-secrets
 ```
 
 Edit `.env` to add your `ANTHROPIC_API_KEY` (only needed for full pipeline runs;
 the smoke test runs without one).
+
+### Token-paste guardrail
+
+`setup.sh` / `setup.ps1` install pre-commit hooks that scan every staged file
+for token-shaped strings (Metricool client IDs, Anthropic / OpenAI / GitHub /
+AWS / Stripe / Slack / Bearer tokens, private keys) before each commit.
+A match fails the commit locally — the token never reaches GitHub.
+
+Manual install (if you didn't run setup):
+```bash
+uv tool install pre-commit detect-secrets
+pre-commit install
+pre-commit install --hook-type commit-msg
+```
+
+If a real false positive shows up (an example value in docs or tests), add
+`# pragma: allowlist secret` to the end of that line. To bypass once
+(dangerous — only when you've actually verified the diff is clean):
+`git commit --no-verify`.
 
 ## Verifying changes
 

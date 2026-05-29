@@ -63,6 +63,19 @@ if ((Test-Path "remotion") -and (Test-Path "remotion/package.json")) {
     }
 }
 
+# Install pre-commit hooks so accidental token paste is blocked locally
+# before it reaches GitHub. Idempotent - re-running is a no-op.
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    Write-Host "[*]  Installing pre-commit + detect-secrets (token-paste guardrail)..."
+    try { uv tool install --quiet pre-commit     } catch {}
+    try { uv tool install --quiet detect-secrets } catch {}
+    if (Get-Command pre-commit -ErrorAction SilentlyContinue) {
+        try { pre-commit install --install-hooks       | Out-Null } catch {}
+        try { pre-commit install --hook-type commit-msg | Out-Null } catch {}
+        Write-Host "[+]  pre-commit hooks installed (.git/hooks/pre-commit)."
+    }
+}
+
 Write-Host ""
 Write-Host "=========================================================================="
 Write-Host "Shortsmith bootstrap complete."

@@ -61,6 +61,19 @@ if [ -d "remotion" ] && [ -f "remotion/package.json" ]; then
     fi
 fi
 
+# Install pre-commit hooks so accidental token paste is blocked locally
+# before it reaches GitHub. Idempotent — re-running is a no-op.
+if command -v uv >/dev/null 2>&1; then
+    echo "[*]  Installing pre-commit + detect-secrets (token-paste guardrail)..."
+    uv tool install --quiet pre-commit       2>/dev/null || true
+    uv tool install --quiet detect-secrets   2>/dev/null || true
+    if command -v pre-commit >/dev/null 2>&1; then
+        pre-commit install --install-hooks       >/dev/null 2>&1 || true
+        pre-commit install --hook-type commit-msg >/dev/null 2>&1 || true
+        echo "[+]  pre-commit hooks installed (.git/hooks/pre-commit)."
+    fi
+fi
+
 cat <<'EOF'
 
 ==========================================================================

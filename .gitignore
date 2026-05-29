@@ -62,3 +62,12 @@ npm-debug.log*
 
 # Network fetch cache (gen_broll.py)
 .cache/
+
+# Metricool publish state (post IDs, scheduled timestamps, account IDs —
+# never commit; tokens live in ~/.claude/, never in this repo)
+.publish-state.json
+.metricool-cache/
+
+# detect-secrets baseline scan artifact (committed elsewhere is fine, but
+# the per-machine cache is not)
+.secrets.cache/

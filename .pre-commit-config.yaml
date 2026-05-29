@@ -1,0 +1,83 @@
+# Pre-commit hooks for shortsmith.
+#
+# What this catches:
+#   - Accidentally-pasted API tokens (Anthropic, OpenAI, GitHub PAT, AWS,
+#     Stripe, Slack, Bearer-prefixed OAuth) in any staged file or commit message
+#   - Private keys (RSA, DSA, EC, OpenSSH, PGP)
+#   - Anthropic-key shapes inside source files
+#   - Metricool client/token shapes (custom regex in `local` hook below)
+#
+# What it does NOT catch:
+#   - Tokens pasted AFTER the pre-commit hook fires (e.g. force-pushed
+#     amends that bypass hooks). Use git's `--no-verify` only if you know
+#     what you're doing.
+#   - Tokens already in .env (those files are gitignored, never staged).
+#
+# Install once on a fresh clone:
+#   uv sync --extra dev
+#   uv run pre-commit install
+#   uv run pre-commit install --hook-type commit-msg
+#
+# Run against everything on demand:
+#   uv run pre-commit run --all-files
+
+repos:
+  # Bundled hooks: catches private keys (PEM blocks), large files, broken YAML.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: ['--maxkb=2048']
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  # Yelp detect-secrets: scans staged diffs for token-shaped strings against
+  # a broad plugin library (AWS, GitHub, JWT, Slack, Stripe, GCP, NPM, etc).
+  # Uses .secrets.baseline to remember already-reviewed false positives so
+  # adding one to baseline doesn't disable the rest.
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        # Exclude binaries + lockfile noise + the secrets baseline itself.
+        exclude: |
+          (?x)^(
+            uv\.lock|
+            package-lock\.json|
+            .*\.svg|
+            .*\.png|
+            .*\.jpg|
+            .*\.jpeg|
+            .*\.mp4|
+            .*\.wav|
+            .*\.mp3|
+            assets/sfx/.*|
+            \.secrets\.baseline
+          )$
+
+  # Local custom hook: token shapes detect-secrets doesn't ship with
+  # (Metricool client IDs, Bearer-prefixed access tokens with no platform
+  # marker). Pure regex; no extra binary.
+  - repo: local
+    hooks:
+      - id: shortsmith-custom-tokens
+        name: shortsmith custom token scanner (Metricool / generic Bearer)
+        entry: python scripts/check_no_tokens.py
+        language: system
+        pass_filenames: true
+        # Skip binaries and the gitignored .env / state files (defense in
+        # depth — they shouldn't be staged in the first place).
+        exclude: |
+          (?x)^(
+            uv\.lock|
+            package-lock\.json|
+            .*\.(svg|png|jpg|jpeg|mp4|wav|mp3|webm|mov|onnx)|
+            assets/sfx/.*|
+            \.publish-state\.json|
+            \.secrets\.baseline
+          )$

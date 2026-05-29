@@ -36,6 +36,13 @@ dev = [
     "ruff>=0.6",
     "pytest>=8.0",
     "pytest-mock>=3.12",
+    # Pre-commit framework + detect-secrets backend. Scans staged diffs for
+    # token-shaped strings (sk-, ghp_, Bearer, AWS, GCP, Stripe, OAuth, ...)
+    # so accidentally pasting a Metricool / Anthropic / GitHub credential
+    # into source code or a commit message fails the commit locally before
+    # it ever reaches the GitHub push. Install once: `uv run pre-commit install`.
+    "pre-commit>=3.7",
+    "detect-secrets>=1.5",
 ]
 
 [project.scripts]
