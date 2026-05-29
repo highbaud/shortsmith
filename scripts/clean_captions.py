@@ -1,12 +1,18 @@
-"""Strip hashtags from already-written caption .txt files.
+"""Clean caption text + clip data in place: strip hashtags and normalize
+em/en/figure dashes (and the U+FFFD mojibake a corrupted em-dash becomes) to
+plain punctuation — a hyphen between digits (ranges), a comma in prose.
 
-Scaffold now removes hashtags at generation time (shortsmith.scaffold._strip_hashtags),
-but caption files written before that change — and any consolidated copies in
-`<kit>/renders/_all/` — still carry trailing hashtag blocks. This walks the
-auto-shorts tree (and _all/) and rewrites every caption .txt in place.
+Scaffold now does both at generation time, but files/data written earlier still
+carry hashtag blocks and dash characters. This back-fills them.
 
-Idempotent and safe to re-run: a file with no hashtags is left byte-for-byte
-unchanged (and not rewritten).
+Covers:
+  * caption .txt — per-source `<short>.txt`, per-project `caption.txt`, `_all/*.txt`
+    (strip hashtags + normalize dashes)
+  * clip JSON — `work/<slug>/clips.json` + `auto-shorts/<src>/_clips.json`
+    (normalize dashes in ALL string values so future scaffolds/renders + metadata
+    are clean; hashtags are left in clips.json — they're stripped at caption write)
+
+Idempotent and safe to re-run.
 
 Usage:
     uv run python scripts/clean_captions.py            # clean everything
@@ -15,14 +21,17 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT
-from shortsmith.scaffold import _strip_hashtags
+from shortsmith.scaffold import _strip_hashtags, normalize_dashes
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+WORK_ROOT = REPO_ROOT / "work"
 
 
 def _caption_files():
-    """Yield every caption .txt: per-source `<short>.txt`, per-project
-    `caption.txt`, and consolidated `_all/*.txt`."""
     roots = [AUTO_SHORTS_ROOT, KIT_ROOT / "renders" / "_all"]
     seen = set()
     for root in roots:
@@ -35,31 +44,76 @@ def _caption_files():
             yield p
 
 
+def _clip_json_files():
+    if WORK_ROOT.exists():
+        for p in WORK_ROOT.glob("*/clips.json"):
+            yield p
+    if AUTO_SHORTS_ROOT.exists():
+        for p in AUTO_SHORTS_ROOT.glob("*/_clips.json"):
+            yield p
+
+
+def _deep_norm(obj):
+    """Recursively dash-normalize all string values. Returns (new, changed)."""
+    if isinstance(obj, str):
+        n = normalize_dashes(obj)
+        return n, n != obj
+    if isinstance(obj, list):
+        changed = False
+        out = []
+        for v in obj:
+            nv, c = _deep_norm(v)
+            out.append(nv)
+            changed = changed or c
+        return out, changed
+    if isinstance(obj, dict):
+        changed = False
+        out = {}
+        for k, v in obj.items():
+            nv, c = _deep_norm(v)
+            out[k] = nv
+            changed = changed or c
+        return out, changed
+    return obj, False
+
+
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Strip hashtags from caption .txt files.")
-    ap.add_argument("--dry-run", action="store_true", help="Report files that would change; write nothing.")
+    ap = argparse.ArgumentParser(description="Strip hashtags + normalize dashes in captions and clip data.")
+    ap.add_argument("--dry-run", action="store_true", help="Report changes; write nothing.")
     args = ap.parse_args()
 
-    changed = scanned = 0
+    txt = 0
     for p in _caption_files():
-        scanned += 1
         try:
             original = p.read_text(encoding="utf-8")
-        except Exception as e:  # unreadable / binary — skip
+        except Exception as e:
             print(f"  skip {p} ({e})")
             continue
-        if "#" not in original:
-            continue
-        cleaned = _strip_hashtags(original) + "\n"
+        cleaned = normalize_dashes(_strip_hashtags(original)).rstrip("\n") + "\n"
         if cleaned == original:
             continue
-        changed += 1
-        print(f"{'WOULD CLEAN' if args.dry_run else 'cleaned'}: {p}")
+        txt += 1
+        print(f"{'WOULD CLEAN' if args.dry_run else 'cleaned'} txt: {p}")
         if not args.dry_run:
             p.write_text(cleaned, encoding="utf-8")
 
-    verb = "would change" if args.dry_run else "cleaned"
-    print(f"\nScanned {scanned} caption files, {verb} {changed}.")
+    js = 0
+    for p in _clip_json_files():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"  skip {p} ({e})")
+            continue
+        new, changed = _deep_norm(data)
+        if not changed:
+            continue
+        js += 1
+        print(f"{'WOULD CLEAN' if args.dry_run else 'cleaned'} json: {p}")
+        if not args.dry_run:
+            p.write_text(json.dumps(new, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    verb = "would change" if args.dry_run else "changed"
+    print(f"\n{verb}: {txt} caption .txt, {js} clip-json files.")
 
 
 if __name__ == "__main__":

@@ -190,7 +190,7 @@ def _scaffold_one(
 
     # Instagram caption — write a .txt with the same stem as the project folder,
     # placed at the source-slug parent so all captions are scannable side-by-side.
-    caption_text = _strip_hashtags(clip.get("instagram_caption") or _fallback_caption(clip))
+    caption_text = normalize_dashes(_strip_hashtags(clip.get("instagram_caption") or _fallback_caption(clip)))
     caption_path = project_dir.parent / f"{project_dir.name}.txt"
     caption_path.write_text(caption_text + "\n", encoding="utf-8")
     # Also drop one inside the project for portability.
@@ -204,6 +204,29 @@ def _scaffold_one(
 # Matches a hashtag token (#word, #word-with-dashes) plus any leading whitespace,
 # so removing it doesn't leave dangling spaces.
 _HASHTAG_RE = re.compile(r"[ \t]*#\w[\w-]*")
+
+
+# Em / en / figure dashes + U+FFFD (the mojibake a corrupted em-dash becomes in
+# some clip-gen output). All get normalized to plain punctuation that always
+# renders and doesn't read as AI.
+_DASH_CHARS = "—–‒―�"  # em, en, figure, horizontal bar, U+FFFD mojibake
+_RANGE_DASH_RE = re.compile(rf"(?<=\d)\s*[{_DASH_CHARS}]\s*(?=\d)")
+_PROSE_DASH_RE = re.compile(rf"\s*[{_DASH_CHARS}]\s*")
+
+
+def normalize_dashes(text: str) -> str:
+    """Replace em/en/figure dashes and the U+FFFD mojibake with plain punctuation:
+    a hyphen between digits (ranges like 2020-2021), a comma elsewhere (a prose
+    pause). Then tidy spacing. Safe to run repeatedly."""
+    if not text:
+        return text
+    text = _RANGE_DASH_RE.sub("-", text)            # numeric ranges -> hyphen
+    text = _PROSE_DASH_RE.sub(", ", text)           # prose pause -> comma
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)    # no space before punctuation
+    text = re.sub(r",\s*,", ",", text)              # collapse doubled commas
+    text = re.sub(r"(^|\n)\s*,\s*", r"\1", text)    # drop a comma left at line start
+    text = re.sub(r"[ \t]{2,}", " ", text)          # collapse space runs
+    return text
 
 
 def _strip_hashtags(text: str) -> str:

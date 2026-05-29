@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 import render_remotion as rr  # noqa: E402
 
-from shortsmith.scaffold import _strip_hashtags  # noqa: E402
+from shortsmith.scaffold import _strip_hashtags, normalize_dashes  # noqa: E402
 
 
 # --- _drop_fillers (um/uh removal from on-screen captions) ---
@@ -43,6 +43,24 @@ def test_strip_hashtags_removes_block_and_tidies():
 def test_strip_hashtags_idempotent_on_clean_text():
     text = "Just a clean caption.\n\nNo tags here."
     assert _strip_hashtags(text) == text
+
+
+# --- normalize_dashes (em/en/mojibake -> plain punctuation) ---
+def test_normalize_dashes_em_to_comma():
+    assert normalize_dashes("portfolio rule — quotable") == "portfolio rule, quotable"
+
+
+def test_normalize_dashes_mojibake_to_comma():
+    assert normalize_dashes("portfolio rule � quotable") == "portfolio rule, quotable"
+
+
+def test_normalize_dashes_numeric_range_to_hyphen():
+    assert normalize_dashes("held 2020–2021 through it") == "held 2020-2021 through it"
+
+
+def test_normalize_dashes_idempotent_on_clean():
+    s = "Just clean, normal prose here."
+    assert normalize_dashes(s) == s
 
 
 # --- _choose_band (face-aware caption placement geometry) ---

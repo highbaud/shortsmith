@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render_remotion as rr  # noqa: E402  (_probe_duration)
 
 from shortsmith.config import AUTO_SHORTS_ROOT  # noqa: E402
+from shortsmith.scaffold import normalize_dashes  # noqa: E402
 
 KIT_RENDERS = AUTO_SHORTS_ROOT.parent.parent / "renders"
 ALL_DIR = KIT_RENDERS / "_all"
@@ -95,12 +96,12 @@ def build(proj: Path, clips_by_rank: dict[int, dict]) -> dict | None:
         "source": proj.parent.name,
         "short": proj.name,
         "rank": rank,
-        "title": (clip.get("hook_text") or "").strip(),
-        "label": overline,                              # the hook eyebrow
-        "description": description,                      # hashtag-free caption body
-        "summary": (clip.get("reasoning") or "").strip(),  # why it lands / what it's about
-        "keywords": keywords,                            # detected entities (NOT hashtags)
-        "callouts": [c.get("text", "") for c in (clip.get("callouts") or []) if c.get("text")],
+        "title": normalize_dashes((clip.get("hook_text") or "").strip()),
+        "label": normalize_dashes(overline),            # the hook eyebrow
+        "description": normalize_dashes(description),    # hashtag-free caption body
+        "summary": normalize_dashes((clip.get("reasoning") or "").strip()),  # why it lands
+        "keywords": [normalize_dashes(k) for k in keywords],  # detected entities (NOT hashtags)
+        "callouts": [normalize_dashes(c.get("text", "")) for c in (clip.get("callouts") or []) if c.get("text")],
         "viral_score": clip.get("viral_score"),
         "duration_seconds": round(rr._probe_duration(deliv), 2) if deliv else None,
         "width": 1080,
