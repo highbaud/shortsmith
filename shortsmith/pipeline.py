@@ -15,6 +15,7 @@ from pathlib import Path
 import click
 
 from shortsmith import (
+    _doctor,
     _wizard,
     align,
     checkpoint,
@@ -43,6 +44,17 @@ def _setup_logging() -> None:
 @click.group()
 def cli() -> None:
     """shortsmith — long-form video -> Hyperframes-ready viral shorts."""
+
+
+@cli.command(name="doctor")
+def doctor_cmd() -> None:
+    """Print a green/red health-check of the local install.
+
+    Run this when a pipeline misbehaves or right after `setup.sh` to confirm
+    every required tool (ffmpeg, uv, npx, sibling venvs, Hyperframes
+    submodule, Remotion deps, SFX pack, YuNet model, API keys) is in place.
+    """
+    sys.exit(_doctor.doctor())
 
 
 @cli.command(name="transcribe")

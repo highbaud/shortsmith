@@ -30,12 +30,22 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 Write-Host "[5/6] Syncing main shortsmith venv (this can take a minute on first run)..."
 uv sync
 
-Write-Host "[6/6] Syncing audio-enhance venv (ClearerVoice + torch)..."
+Write-Host "[6/7] Syncing audio-enhance venv (ClearerVoice + torch)..."
 if (Test-Path "audio-enhance") {
     Push-Location audio-enhance
     try { uv sync } finally { Pop-Location }
 } else {
     Write-Host "WARN: audio-enhance/ not found. Skipping. (You can still run with --no-enhance.)" -ForegroundColor Yellow
+}
+
+Write-Host "[7/7] Syncing whisperx-align venv (WhisperX + torch 2.8.0+cu128)..."
+if (Test-Path "whisperx-align") {
+    Push-Location whisperx-align
+    try { uv sync } catch {
+        Write-Host "WARN: whisperx-align sync failed. Step 6 will fall back to faster-whisper retranscribe." -ForegroundColor Yellow
+    } finally { Pop-Location }
+} else {
+    Write-Host "WARN: whisperx-align/ not found. Skipping. (Step 6 falls back to faster-whisper retranscribe.)" -ForegroundColor Yellow
 }
 
 if (-not (Test-Path ".env")) {

@@ -1,6 +1,7 @@
 # Python venvs and caches
 .venv/
 audio-enhance/.venv/
+whisperx-align/.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -10,6 +11,7 @@ __pycache__/
 # Model checkpoints (downloaded at runtime)
 audio-enhance/checkpoints/
 audio-enhance/test/
+whisperx-align/checkpoints/
 checkpoints/
 models/cache/
 
@@ -52,3 +54,6 @@ npm-debug.log*
 
 # Remotion auto-derived b-roll picks (regenerated per render)
 **/broll.auto.json
+
+# Network fetch cache (gen_broll.py)
+.cache/
