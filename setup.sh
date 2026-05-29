@@ -44,6 +44,15 @@ if [ ! -f .env ]; then
     echo "[+]  Created .env from .env.example."
 fi
 
+if [ -d "remotion" ] && [ -f "remotion/package.json" ]; then
+    if command -v npm >/dev/null 2>&1; then
+        echo "[*]  Installing Remotion node deps (one-time, ~600 MB)..."
+        ( cd remotion && npm install --silent )
+    else
+        echo "WARN: npm not found. Skipping Remotion install. (Captions + b-roll layer disabled.)"
+    fi
+fi
+
 cat <<'EOF'
 
 ==========================================================================

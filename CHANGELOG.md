@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] — Unreleased
+
+### Added
+- **Sound effects (SFX) overlay pass** (`shortsmith/sfx.py` + `scripts/add_sfx.py`).
+  Post-render mixer that lays approved one-shots on top of the speech:
+  structural triggers (hook impact at t=0, swipe-in/out on callouts) and
+  semantic triggers (cash-register on first money word, ding on bigstat
+  numbers). Non-destructive — writes `final_sfx.mp4` beside the input.
+- **Curated SFX pack** at `assets/sfx/pack/` with `pack.json` mapping each slot
+  to one or more rotated variant files. `scripts/build_sfx_pack.py` builds the
+  pack from raw drops in `assets/sfx/`. Pack is level-normalized (-9 dBFS peak)
+  and sits 10-16 dB under speech.
+- **Remotion render layer** (`remotion/` + `scripts/render_remotion.py` +
+  `scripts/apply_remotion.py`). Layers word-level captions and AI-selected
+  b-roll over the Hyperframes base render. Produces `final_remotion.mp4`.
+- **Heuristic + LLM b-roll engine** (`scripts/gen_broll.py` +
+  `prompts/gen_broll.md`). Builds `broll.auto.json` listing logo / chart /
+  stock-image picks tied to spoken keywords, sourced from public-domain CC
+  feeds (Wikimedia Commons, Openverse, Wikipedia).
+- **`scripts/finalize.py`** — three-phase finisher: Phase 0 (Remotion) →
+  Phase 1 (SFX) → Phase 2 (consolidate all `final_sfx.mp4` + `caption.txt`
+  into `<kit>/renders/_all/`). Idempotent and authoritative.
+- **`PROJECT_STATE.md`** — top-level resume document for picking the project
+  back up in a fresh session.
+- **SFX config knobs** in `shortsmith/config.py`: `sfx_enabled`, `sfx_gain`,
+  `sfx_limit`, `sfx_slot_gain` per-slot dict, `sfx_semantic_mode`
+  (`sparing`/`every`/`off`), money-word list. `SFX_DIR` resolves to
+  `assets/sfx/pack/` by default.
+- **9 new SFX tests** in `tests/test_sfx.py`. Total test count now 31.
+
+### Changed
+- `.gitignore` excludes `remotion/node_modules/`, `node_modules/`, and
+  generated `broll.auto.json` files.
+
 ## [0.3.0] — Unreleased
 
 ### Added

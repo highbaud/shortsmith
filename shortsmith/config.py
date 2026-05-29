@@ -61,6 +61,7 @@ TEMPLATE_REF          = Path(_template_override).expanduser().resolve() \
 AUDIO_ENHANCE_PROJECT = _resolve_path("SHORTSMITH_AUDIO_ENHANCE",   "audio-enhance")
 WHISPERX_ALIGN_PROJECT = _resolve_path("SHORTSMITH_WHISPERX_ALIGN", "whisperx-align")
 VIDEO_DIR             = _resolve_path("SHORTSMITH_VIDEO_DIR",       "videos")
+SFX_DIR               = _resolve_path("SHORTSMITH_SFX_DIR",        "assets/sfx")
 
 DEFAULT_FILLERS = [
     # Pure stammers — never content.
@@ -145,6 +146,34 @@ class Config:
     # Runs in sibling uv project WHISPERX_ALIGN_PROJECT. Falls back to
     # "faster-whisper" (the in-process re-transcribe) if whisperx is unavailable.
     align_engine: str = os.environ.get("SHORTSMITH_ALIGN", "whisperx")
+
+    # Sound effects (post-render overlay pass — scripts/add_sfx.py).
+    # A curated, level-normalized pack lives in SFX_DIR/pack/ with a pack.json
+    # mapping each slot to one or more variant files (rotated for variety).
+    # If pack.json is absent, load_sfx_map falls back to slot-named files.
+    sfx_enabled: bool = True
+    sfx_gain: float = 0.7              # global multiplier on top of per-slot gain
+    sfx_limit: float = 0.97           # output limiter ceiling to avoid clipping
+    sfx_swipe_out: bool = False       # also play a swipe when a callout LEAVES (denser)
+    # Per-slot gain — swipes sit further under the voice than the money/stat
+    # accents, which are meant to "pop". Multiplied by sfx_gain at mix time.
+    sfx_slot_gain: dict = field(default_factory=lambda: {
+        "swipe-in": 0.55,
+        "swipe-out": 0.45,
+        "hook-impact": 0.7,
+        "cash-register": 0.85,
+        "ding": 0.7,
+        "whoosh": 0.55,
+    })
+    # "sparing" = cash-register only on first money mention, ding only on
+    # bigstat $ callouts. "every" = every match. "off" = structural swipes only.
+    sfx_semantic_mode: str = os.environ.get("SHORTSMITH_SFX_SEMANTIC", "sparing")
+    money_keywords: list[str] = field(default_factory=lambda: [
+        "money", "cash", "dollar", "dollars", "rich", "wealth", "wealthy",
+        "thousand", "thousands", "million", "millions", "millionaire",
+        "billion", "billions", "billionaire", "trillion", "trillions",
+        "fortune", "profit", "profits", "payday",
+    ])
 
     # Audio enhancement.
     # "clearvoice" (default) = ClearerVoice-Studio MossFormer2_SE_48K, SOTA

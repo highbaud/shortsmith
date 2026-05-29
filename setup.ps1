@@ -43,6 +43,16 @@ if (-not (Test-Path ".env")) {
     Write-Host "[+]  Created .env from .env.example."
 }
 
+if ((Test-Path "remotion") -and (Test-Path "remotion/package.json")) {
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        Write-Host "[*]  Installing Remotion node deps (one-time, ~600 MB)..."
+        Push-Location remotion
+        try { npm install --silent } finally { Pop-Location }
+    } else {
+        Write-Host "WARN: npm not found. Skipping Remotion install. (Captions + b-roll layer disabled.)" -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
 Write-Host "=========================================================================="
 Write-Host "Shortsmith bootstrap complete."
