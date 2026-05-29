@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] — Unreleased
+
+### Added
+- **SFX pack ships with the repo.** Whitelisted `assets/sfx/**` (raw drops
+  and normalized pack/ alike). Fresh clones now get a working sound-effect
+  library out of the box; no need to run `scripts/build_sfx_pack.py` before
+  `scripts/add_sfx.py` or `scripts/finalize.py` produce audio.
+
+### Changed
+- `.gitignore` excludes `.claude/` (local Claude Code session state).
+
 ## [0.5.0] — Unreleased
 
 ### Added
