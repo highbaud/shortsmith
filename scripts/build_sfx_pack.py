@@ -37,24 +37,30 @@ TARGET_PEAK_DB = -9.0   # normalize every one-shot to this peak
 # enough variety per slot that the rotation feels non-repetitive across a
 # multi-callout clip without ever crowding the speech bed.
 CURATION: dict[str, list[tuple[str, str]]] = {
-    # swipe-in: callout slam-ins. Whip cracks + short whooshes — tight 0.2–0.4s
-    # transients. Rotating between whoosh + whip families keeps long batches
-    # from feeling stamped out.
+    # swipe-in: callout slam-ins. Whip cracks + short whooshes — tight
+    # 0.2–0.6s transients. Maxed out for rotation: every clean whip + every
+    # short whoosh goes in. The mixer cycles through variants so a 6-callout
+    # clip never repeats the same hit.
     "swipe-in": [
-        ("Short Whoosh.wav",  "swipe-in-1.wav"),
-        ("Short Whoosh2.wav", "swipe-in-2.wav"),
-        ("Short Whoosh3.wav", "swipe-in-3.wav"),
-        ("whip whoosh.wav",   "swipe-in-4.wav"),
-        ("whip3.wav",         "swipe-in-5.wav"),
-        ("whip6.wav",         "swipe-in-6.wav"),
-        ("whip4.wav",         "swipe-in-7.wav"),
+        ("Short Whoosh.wav",  "swipe-in-01.wav"),
+        ("Short Whoosh2.wav", "swipe-in-02.wav"),
+        ("Short Whoosh3.wav", "swipe-in-03.wav"),
+        ("whip whoosh.wav",   "swipe-in-04.wav"),
+        ("whip1.wav",         "swipe-in-05.wav"),
+        ("whip3.wav",         "swipe-in-06.wav"),
+        ("whip4.wav",         "swipe-in-07.wav"),
+        ("whip6.wav",         "swipe-in-08.wav"),
+        ("whip7.wav",         "swipe-in-09.wav"),
+        ("whip8.wav",         "swipe-in-10.wav"),
+        ("whipdouble.wav",    "swipe-in-11.wav"),
     ],
     # swipe-out: softer / shorter than swipe-in. Reverse-feel whooshes + a
-    # cleaner whip alternative.
+    # few clean whip alternatives.
     "swipe-out": [
         ("Short Whoosh3.wav", "swipe-out-1.wav"),
         ("Short Whoosh.wav",  "swipe-out-2.wav"),
-        ("whip5.mp3",         "swipe-out-3.wav"),
+        ("whip2.mp3",         "swipe-out-3.wav"),
+        ("whip5.mp3",         "swipe-out-4.wav"),
     ],
     # hook-impact: big at t=0. Bodied camera-whoosh hits + a longer riser
     # variant for clips that breathe before the first beat lands.
@@ -64,27 +70,45 @@ CURATION: dict[str, list[tuple[str, str]]] = {
         ("Long Whoosh.wav",           "hook-impact-3.wav"),
         ("Riser to Notification.wav", "hook-impact-4.wav"),
     ],
-    # cash-register: iconic kaching, single sample is plenty (only fires once
+    # cash-register: iconic kaching. Single sample is plenty (only fires once
     # per clip on the first money word).
     "cash-register": [
         ("cash register kaching.mp3", "cash-register-1.wav"),
     ],
-    # ding: bigstat number reveal. Mix of pitched bells + bright UI taps so a
-    # clip with 3 bigstats doesn't ring the same bell three times.
+    # ding: bigstat number reveal. Mix of pitched bells + bright UI taps + a
+    # pop so a 4-bigstat clip cycles through 4 distinct alert sounds.
+    # icon_06,10,11 have decent peaks; quieter icons (-20 dB+) get heavy
+    # post-gain that exposes their noise floor, so they sit out.
     "ding": [
         ("bell ding1.wav",  "ding-1.wav"),
         ("anime shine.mp3", "ding-2.wav"),
         ("beep1.wav",       "ding-3.wav"),
         ("pop1.wav",        "ding-4.wav"),
-        ("icon_03.wav",     "ding-5.wav"),
-        ("icon_14.wav",     "ding-6.wav"),
+        ("pop2.wav",        "ding-5.wav"),
+        ("icon_03.wav",     "ding-6.wav"),
+        ("icon_07.wav",     "ding-7.wav"),
+        ("icon_10.wav",     "ding-8.wav"),
+        ("icon_11.wav",     "ding-9.wav"),
+        ("icon_14.wav",     "ding-10.wav"),
     ],
     # whoosh: generic transition fallback. Longer / smoother than swipe-in.
+    # fastwhoosh is at -29 dBFS in source so it gets heavily gained up;
+    # keeping it because the texture is still clean post-normalize.
     "whoosh": [
-        ("CameraWhoosh.wav",      "whoosh-1.wav"),
-        ("Click to Whoosh.wav",   "whoosh-2.wav"),
-        ("Long Whoosh.wav",       "whoosh-3.wav"),
+        ("CameraWhoosh.wav",          "whoosh-1.wav"),
+        ("Click to Whoosh.wav",       "whoosh-2.wav"),
+        ("Long Whoosh.wav",           "whoosh-3.wav"),
+        ("Digital Small whoosh.wav",  "whoosh-4.wav"),
+        ("fastwhoosh.wav",            "whoosh-5.wav"),
     ],
+    # Intentionally NOT in any slot (yet):
+    # - mouse click (1-8).wav   no callout-style trigger fires per click
+    # - whip9/10/11/12.wav      source peaks at -20 to -29 dBFS, too noisy
+    # - icon_01/02/04/05/08/09/13/15.wav  ditto, would amplify noise
+    # - icon_06.wav             1.26s sits between ding and impact, no fit
+    # - pop5.wav                2.40s too long for a snappy ding
+    # - gong.mp3                7.64s body would dominate the hook bed
+    # - Errror.wav / windows error.mp3   negative cue, no slot for it
 }
 
 

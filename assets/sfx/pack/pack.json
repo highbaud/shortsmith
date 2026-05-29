@@ -1,17 +1,22 @@
 {
   "swipe-in": [
-    "swipe-in-1.wav",
-    "swipe-in-2.wav",
-    "swipe-in-3.wav",
-    "swipe-in-4.wav",
-    "swipe-in-5.wav",
-    "swipe-in-6.wav",
-    "swipe-in-7.wav"
+    "swipe-in-01.wav",
+    "swipe-in-02.wav",
+    "swipe-in-03.wav",
+    "swipe-in-04.wav",
+    "swipe-in-05.wav",
+    "swipe-in-06.wav",
+    "swipe-in-07.wav",
+    "swipe-in-08.wav",
+    "swipe-in-09.wav",
+    "swipe-in-10.wav",
+    "swipe-in-11.wav"
   ],
   "swipe-out": [
     "swipe-out-1.wav",
     "swipe-out-2.wav",
-    "swipe-out-3.wav"
+    "swipe-out-3.wav",
+    "swipe-out-4.wav"
   ],
   "hook-impact": [
     "hook-impact-1.wav",
@@ -28,11 +33,17 @@
     "ding-3.wav",
     "ding-4.wav",
     "ding-5.wav",
-    "ding-6.wav"
+    "ding-6.wav",
+    "ding-7.wav",
+    "ding-8.wav",
+    "ding-9.wav",
+    "ding-10.wav"
   ],
   "whoosh": [
     "whoosh-1.wav",
     "whoosh-2.wav",
-    "whoosh-3.wav"
+    "whoosh-3.wav",
+    "whoosh-4.wav",
+    "whoosh-5.wav"
   ]
 }

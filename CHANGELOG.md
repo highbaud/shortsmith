@@ -18,12 +18,14 @@ All notable changes to this project will be documented in this file.
   `assets/sfx/CATALOG.md` (human-readable, grouped by slot). Makes
   choosing which raw drop fills which slot a lookup rather than a listen.
 - **Expanded SFX pack** — `scripts/build_sfx_pack.py` curation now ships
-  24 normalized variants (was 11), informed by the new index:
-  swipe-in 7 (+3 whip cracks), swipe-out 3 (+1 cleaner whip), hook-impact
-  4 (+ camera-whoosh / long whoosh / riser-to-notification),
-  ding 6 (+ beep / pop / 2 UI taps), whoosh 3 (+ click-to-whoosh / long).
-  Much more rotation variety across long batches — the same callout slam
-  no longer fires the same hit 5 times in a row.
+  **35** normalized variants (was 11), informed by the new index:
+  swipe-in 11 (every clean whip + 3 short whooshes), swipe-out 4,
+  hook-impact 4 (+ camera-whoosh / long whoosh / riser-to-notification),
+  ding 10 (bells + anime-shine + beep + 2 pops + 5 icon taps),
+  whoosh 5 (every distinct whoosh body). Much more rotation variety —
+  a 6-callout clip now cycles 6 distinct swipe-ins instead of 4.
+  Files explicitly excluded (mouse-clicks, low-peak whips/icons,
+  windows-error, gong) are documented in CURATION's trailing comment.
 
 ### Changed
 - `.gitignore` excludes `.claude/` (local Claude Code session state).
