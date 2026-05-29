@@ -97,6 +97,23 @@ def _clear_remotion_cache() -> None:
     log.info("Cleared %d Remotion cache dir(s) so captions/transitions recompile fresh", removed)
 
 
+def _disk_guard(min_warn_gb: float = 20.0, min_abort_gb: float = 5.0) -> None:
+    """Refuse to start a full finalize run when the renders drive is nearly full.
+    Re-renders + freeze re-encodes + _all/ copies need headroom; running out
+    mid-batch leaves a half-finished mess. Abort < min_abort_gb, warn < min_warn_gb."""
+    KIT_RENDERS.mkdir(parents=True, exist_ok=True)
+    free_gb = shutil.disk_usage(KIT_RENDERS).free / 2 ** 30
+    if free_gb < min_abort_gb:
+        log.error("Only %.1f GB free on the renders drive (need >= %.0f GB). "
+                  "Free space / run cleanup, then retry.", free_gb, min_abort_gb)
+        sys.exit(1)
+    if free_gb < min_warn_gb:
+        log.warning("Low disk: %.1f GB free (< %.0f GB) — finalize may run tight.",
+                    free_gb, min_warn_gb)
+    else:
+        log.info("Disk OK: %.1f GB free on the renders drive.", free_gb)
+
+
 def phase0_remotion(style: str, force: bool = False) -> int:
     """Layer Remotion captions + auto b-roll onto every scaffolded short."""
     sys.path.insert(0, str(SHORTSMITH_ROOT / "scripts"))
@@ -246,6 +263,8 @@ def main() -> int:
              "the Hyperframes base (the bundle cache is always cleared regardless).",
     )
     args = ap.parse_args()
+
+    _disk_guard()
 
     if args.offline:
         os.environ["SHORTSMITH_BROLL_OFFLINE"] = "1"
