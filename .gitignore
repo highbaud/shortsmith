@@ -26,10 +26,12 @@ work/
 *.mov
 *.wav
 *.mp3
-# But DO commit the bundled smoke-test sample and anything inside the kit
+# But DO commit the bundled smoke-test sample, anything inside the kit, and
+# the curated SFX pack (licensed for redistribution).
 !examples/sample_clip.mp4
 !hyperframes-student-kit/**/*.mp4
 !hyperframes-student-kit/**/*.wav
+!assets/sfx/**
 
 # Local config (never commit secrets)
 .env
