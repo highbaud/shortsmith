@@ -12,6 +12,7 @@ import {
 } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Anton";
 import { BRoll } from "./BRoll";
+import { Flash, Glare, useZoomPunchScale } from "./VFX";
 import { CaptionBand, Palette, ShortProps, TimeWindow, Word } from "./types";
 
 // Anton: heavy condensed display face, matches the Hyperframes hook/callouts.
@@ -171,18 +172,23 @@ const Captions: React.FC<{
   );
 };
 
-export const Short: React.FC<ShortProps> = ({
-  baseVideo,
-  fps,
-  captionsEnabled,
-  words,
-  captionBand,
-  captionMaxWords,
-  captionFadeSeconds,
-  overlayWindows,
-  broll,
-  palette,
-}) => {
+/** Inner component so the useCurrentFrame() inside useZoomPunchScale runs in a
+ *  context that's already inside the Composition. Keeps the parent Short
+ *  unchanged for callers that pass no vfxEvents. */
+const ShortInner: React.FC<ShortProps> = (props) => {
+  const {
+    baseVideo,
+    fps,
+    captionsEnabled,
+    words,
+    captionBand,
+    captionMaxWords,
+    captionFadeSeconds,
+    overlayWindows,
+    broll,
+    palette,
+    vfxEvents = [],
+  } = props;
   // Captions yield during full-frame b-roll cutaways (a slide that covers the
   // frame would otherwise have karaoke text on top of it). Logo *badges* are a
   // small upper-area overlay that leaves the base video and captions visible,
@@ -204,9 +210,18 @@ export const Short: React.FC<ShortProps> = ({
     .map((s) => ({ start: s.start, end: s.end }));
   const yieldWindows = [...overlayWindows, ...brollWindows];
 
+  // Zoom-punch scales the base video container. Multiple overlapping punches
+  // take the max (not the sum) so stacked hooks don't compound.
+  const zoomScale = useZoomPunchScale(vfxEvents);
+
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
-      <OffthreadVideo src={staticFile(baseVideo)} />
+      <AbsoluteFill style={{
+        transform: `scale(${zoomScale})`,
+        transformOrigin: "center 40%",  // anchor at face zone (face_target_y=0.40)
+      }}>
+        <OffthreadVideo src={staticFile(baseVideo)} />
+      </AbsoluteFill>
 
       {captionsEnabled ? (
         <Captions
@@ -228,6 +243,35 @@ export const Short: React.FC<ShortProps> = ({
           </Sequence>
         );
       })}
+
+      {/* VFX overlays (glare + flash) — rendered last so they sit on top of
+          everything else. zoom-punch is applied at the base layer above; not
+          repeated here. */}
+      {vfxEvents.map((ev, i) => {
+        const from = Math.round(ev.t * fps);
+        const durationInFrames = Math.max(
+          1, Math.round((ev.durationMs / 1000) * fps),
+        );
+        if (ev.effect === "glare") {
+          return (
+            <Sequence key={`v${i}`} from={from} durationInFrames={durationInFrames}>
+              <Glare startSec={ev.t} durationMs={ev.durationMs}
+                     color={ev.color} intensity={ev.intensity} />
+            </Sequence>
+          );
+        }
+        if (ev.effect === "flash") {
+          return (
+            <Sequence key={`v${i}`} from={from} durationInFrames={durationInFrames}>
+              <Flash startSec={ev.t} durationMs={ev.durationMs}
+                     color={ev.color} intensity={ev.intensity} />
+            </Sequence>
+          );
+        }
+        return null;  // zoom-punch handled by useZoomPunchScale above
+      })}
     </AbsoluteFill>
   );
 };
+
+export const Short: React.FC<ShortProps> = (props) => <ShortInner {...props} />;

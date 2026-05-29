@@ -96,6 +96,18 @@ export type Palette = {
   bg: string;
 };
 
+/** One visual transition event — a single Glare sweep, Flash flicker, or
+ *  ZoomPunch scale-bump anchored at a moment in the clip. The Python planner
+ *  (shortsmith/vfx.py) emits these in lockstep with the audio SFX so audio +
+ *  visual punctuation hit the same beat. */
+export type VFXEvent = {
+  t: number;          // seconds into the final clip
+  effect: "glare" | "zoom-punch" | "flash";
+  color: string;      // hex tint (ignored by zoom-punch — geometry-only)
+  intensity: number;  // 0..1 opacity / scale-bump multiplier
+  durationMs: number; // total length of this single event
+};
+
 export type ShortProps = {
   /** Base video, resolved relative to Remotion's public dir (the short folder).
    *  Normally the Hyperframes "renders/final.mp4" so its overlays stay intact. */
@@ -117,6 +129,10 @@ export type ShortProps = {
 
   /** Accent palette from the short's style preset (color-matches Hyperframes). */
   palette: Palette;
+
+  /** Optional visual transitions (Capcut-style glare, zoom-punch, flash).
+   *  Empty / omitted = no VFX layer rendered. */
+  vfxEvents?: VFXEvent[];
 };
 
 export const defaultShortProps: ShortProps = {
@@ -136,4 +152,5 @@ export const defaultShortProps: ShortProps = {
     accent: "#34c759",
     bg: "#07121c",
   },
+  vfxEvents: [],
 };

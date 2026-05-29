@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] — Unreleased
+
+### Added
+- **Visual transitions (VFX) layer** in Remotion — Capcut-style **Glare**
+  (diagonal light sweep across the frame), **ZoomPunch** (~4% scale bump,
+  bell-curve eased), and **Flash** (~90ms full-frame color tint).
+  Triggered in lockstep with the 4 high-impact SFX slots:
+    * `hook-impact` (t=0) → glare + zoom-punch + flash (white)
+    * `ding` (bigstat $ callout) → glare (gold)
+    * `cash-register` (first money word) → glare + flash (gold)
+    * `wrong-answer` (first negative word) → flash + zoom-punch (red)
+  Per-slot effect-set and color tint live in `Config.vfx_triggers` /
+  `Config.vfx_colors`; wholesale disable via `SHORTSMITH_VFX=off`;
+  global intensity via `SHORTSMITH_VFX_INTENSITY`. Multiple overlapping
+  zoom-punches take the max scale (not the sum) so stacked hooks don't
+  compound into a noticeable zoom. New `shortsmith/vfx.py`,
+  `remotion/src/VFX.tsx`, `remotion/src/types.ts` adds `VFXEvent`,
+  `scripts/render_remotion.py` passes `vfxEvents` in props. **12 new tests**
+  cover the trigger taxonomy (sparing/every/off modes, intensity
+  propagation, effect-duration defaults, prop shape). Total now 61.
+
 ## [0.5.1] — Unreleased
 
 ### Added

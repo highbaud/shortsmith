@@ -29,7 +29,7 @@ import logging
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from shortsmith.config import SFX_DIR
@@ -336,7 +336,7 @@ def main() -> int:
 
     index = {
         "version": 1,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "root": sfx_root.as_posix(),
         "slot_definitions": SLOT_DEFINITIONS,
         "category_to_slots": CATEGORY_TO_SLOTS,

@@ -176,6 +176,32 @@ class Config:
         "billion", "billions", "billionaire", "trillion", "trillions",
         "fortune", "profit", "profits", "payday",
     ])
+    # Visual transitions (Remotion VFX layer).
+    # A family of three primitives — glare (Capcut-style horizontal light
+    # sweep), zoom-punch (brief 1.0 -> 1.04 scale bump), flash (~80ms
+    # full-frame color tint) — each fires on the same 4 high-impact slots
+    # the audio SFX already uses, so audio + visual punctuation sync.
+    # Wholesale disable via cfg.vfx_enabled = False (or SHORTSMITH_VFX=off).
+    vfx_enabled: bool = (os.environ.get("SHORTSMITH_VFX", "on").lower()
+                         not in ("off", "0", "false", "no"))
+    vfx_intensity: float = float(os.environ.get("SHORTSMITH_VFX_INTENSITY", "1.0"))
+    # Slot -> list of effect names. Default mapping is "sparing" (4 punchy
+    # beats only — never on every callout). Override per-slot to taste.
+    vfx_triggers: dict = field(default_factory=lambda: {
+        "hook-impact":  ["glare", "zoom-punch", "flash"],  # big slam
+        "ding":         ["glare"],                          # gold accent
+        "cash-register":["glare", "flash"],                 # gold money pop
+        "wrong-answer": ["flash", "zoom-punch"],            # red error punch
+    })
+    # Per-slot color tint (hex). Glare/flash use the tint as the gradient/
+    # overlay color; zoom-punch ignores it (geometry-only effect).
+    vfx_colors: dict = field(default_factory=lambda: {
+        "hook-impact":   "#ffffff",  # white
+        "ding":          "#f5c842",  # gold (xrp-revolution primary)
+        "cash-register": "#f5c842",  # gold
+        "wrong-answer":  "#ff3653",  # red (xrp-revolution danger)
+    })
+
     # Negative-outcome words that trigger the wrong-answer slot. Tuned for
     # crypto/finance livestream content — the moment a clip names the bad
     # outcome ("crashed", "rugged", "scammed", "bankrupt") the error buzz

@@ -28,11 +28,11 @@ your-video.mp4 (3hr podcast, talking-head)
        │ │ 6. Force-align words (WhisperX wav2vec2, ~20ms) │
        │ │ 7. Reframe 9:16 (YuNet biggest-face)     │
        │ └────────────────────────────────────────┘
-       │ ┌─── PHASE C: render + caption + b-roll + SFX ───┐
+       │ ┌─── PHASE C: render + caption + b-roll + VFX + SFX ───┐
        ├─┤ 8. Scaffold Hyperframes project          │
        │ │ 9. Hyperframes base render (slam hook + callouts) │
-       │ │ 10. Remotion layer (word captions + AI b-roll) │
-       │ │ 11. SFX overlay (swipe-in / cash / ding) │
+       │ │ 10. Remotion layer (captions + AI b-roll + Glare/Flash/ZoomPunch) │
+       │ │ 11. SFX overlay (swipe-in / cash / ding / error-buzz) │
        │ └────────────────────────────────────────┘
        ↓
   hyperframes-student-kit/renders/_all/
@@ -180,6 +180,7 @@ A curated, level-normalized pack lives at [`assets/sfx/pack/`](assets/sfx/) with
 - [docs/SETUP.md](docs/SETUP.md) — install per OS, CUDA torch matrix, model downloads.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — common errors and fixes.
 - [docs/SFX.md](docs/SFX.md) — sound-effect pack format, triggers, level approval.
+- [docs/VFX.md](docs/VFX.md) — visual transitions (glare / zoom-punch / flash).
 - [docs/REMOTION.md](docs/REMOTION.md) — captions layer + b-roll engine.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — PR checklist, where to file issues.
 - [PROJECT_STATE.md](PROJECT_STATE.md) — current development state (read this first if you're picking the project back up after a break).

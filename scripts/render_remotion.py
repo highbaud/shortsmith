@@ -251,22 +251,29 @@ def _drop_fillers(words: list[dict]) -> list[dict]:
     return out
 
 
+def _clip_for(short_dir: Path) -> dict | None:
+    """Load the source clip spec (hook + callouts + segments + viral_score, ...)
+    for a `short-NN-<slug>` folder from its sibling `_clips.json`. Returns None
+    if the folder name doesn't parse or the file isn't there."""
+    m = re.match(r"short-(\d+)-", short_dir.name)
+    if not m:
+        return None
+    rank = int(m.group(1))
+    clips_path = short_dir.parent / "_clips.json"
+    if not clips_path.exists():
+        return None
+    try:
+        clips = json.loads(clips_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    return next((c for c in clips if c.get("rank") == rank), None)
+
+
 def _overlay_windows(short_dir: Path, clip_duration: float) -> list[dict]:
     """Derive Hyperframes overlay time windows (hook + callouts) from the source
     _clips.json, replicating scaffold.py's clamping so the windows match what
     Hyperframes actually rendered."""
-    m = re.match(r"short-(\d+)-", short_dir.name)
-    if not m:
-        return []
-    rank = int(m.group(1))
-    clips_path = short_dir.parent / "_clips.json"
-    if not clips_path.exists():
-        return []
-    try:
-        clips = json.loads(clips_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    clip = next((c for c in clips if c.get("rank") == rank), None)
+    clip = _clip_for(short_dir)
     if not clip:
         return []
 
@@ -390,6 +397,25 @@ def _validate_broll(broll: list[dict], overlays: list[dict], duration: float) ->
     return kept
 
 
+def _vfx_events(short_dir: Path, words: list[dict],
+                clip_duration: float) -> list[dict]:
+    """Plan the VFX overlay events (glare / zoom-punch / flash) for this short,
+    in the prop shape the Remotion VFX layer consumes. Empty list if disabled
+    or if the clip spec / config isn't reachable — VFX is purely additive."""
+    try:
+        from shortsmith.config import Config
+        from shortsmith.vfx import plan_vfx_events
+    except Exception:  # noqa: BLE001 - standalone use w/o the package
+        return []
+    cfg = Config()
+    if not getattr(cfg, "vfx_enabled", True):
+        return []
+    clip = _clip_for(short_dir)
+    if not clip:
+        return []
+    return [e.to_props() for e in plan_vfx_events(clip, words, cfg, clip_duration)]
+
+
 def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
            broll_arg: str | None, output: str, style: str, open_after: bool) -> Path:
     short_dir = short_dir.resolve()
@@ -420,6 +446,8 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
     band = _face_aware_band(base_abs, platform) if captions else PLATFORM_BANDS.get(platform, PLATFORM_BANDS["generic"])
     palette = _resolve_palette(style)
 
+    vfx_events = _vfx_events(short_dir, words, duration)
+
     props = {
         "baseVideo": base_rel,
         "durationInSeconds": duration,
@@ -432,6 +460,7 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
         "overlayWindows": overlays,
         "broll": broll,
         "palette": palette,
+        "vfxEvents": vfx_events,
     }
 
     out_path = short_dir / "renders" / output
@@ -444,7 +473,7 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
     print(f"Rendering {short_dir.name} -> {out_path.name}")
     print(f"  base={base_rel} ({duration:.1f}s)  captions={'on' if captions else 'off'} "
           f"({platform})  overlays={len(overlays)}  broll={len(broll)}  palette={style}  "
-          f"band=[{band['top']:.2f},{band['bottom']:.2f}]")
+          f"band=[{band['top']:.2f},{band['bottom']:.2f}]  vfx={len(vfx_events)}")
 
     npx = "npx.cmd" if sys.platform == "win32" else "npx"
     cmd = [
