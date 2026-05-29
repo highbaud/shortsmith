@@ -390,6 +390,11 @@ def _render_text(text: str, accent_words: list[str], color: str, style: str) -> 
     """
     import html as html_escape
 
+    # Scrub em/en dashes + mojibake from on-screen overlay text too (per line, so
+    # the \n layout breaks survive) — same rule as captions/metadata, so future
+    # videos never bake a stray dash into the hook/callout cards.
+    text = "\n".join(normalize_dashes(ln) for ln in text.split("\n"))
+
     if style != "caption":
         text = text.upper()
 
