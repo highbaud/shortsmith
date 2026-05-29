@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generated_at": "2026-05-29T04:29:51+00:00",
+  "generated_at": "2026-05-29T04:33:51+00:00",
   "root": "F:/Claude Code/shortsmith/assets/sfx",
   "slot_definitions": {
     "swipe-in": {
@@ -785,8 +785,8 @@
       ]
     },
     {
-      "path": "pack/ding-1.wav",
-      "filename": "ding-1.wav",
+      "path": "pack/ding-01.wav",
+      "filename": "ding-01.wav",
       "location": "pack",
       "size_bytes": 383122,
       "duration_s": 1.995,
@@ -803,26 +803,8 @@
       ]
     },
     {
-      "path": "pack/ding-10.wav",
-      "filename": "ding-10.wav",
-      "location": "pack",
-      "size_bytes": 71082,
-      "duration_s": 0.37,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -9.0,
-      "mean_dbfs": -31.1,
-      "category": "ding",
-      "duration_bucket": "short",
-      "loudness_bucket": "normal",
-      "description": "short normal ding",
-      "suggested_slots": [
-        "ding"
-      ]
-    },
-    {
-      "path": "pack/ding-2.wav",
-      "filename": "ding-2.wav",
+      "path": "pack/ding-02.wav",
+      "filename": "ding-02.wav",
       "location": "pack",
       "size_bytes": 547482,
       "duration_s": 2.851,
@@ -839,8 +821,8 @@
       ]
     },
     {
-      "path": "pack/ding-3.wav",
-      "filename": "ding-3.wav",
+      "path": "pack/ding-03.wav",
+      "filename": "ding-03.wav",
       "location": "pack",
       "size_bytes": 22668,
       "duration_s": 0.117,
@@ -857,8 +839,8 @@
       ]
     },
     {
-      "path": "pack/ding-4.wav",
-      "filename": "ding-4.wav",
+      "path": "pack/ding-04.wav",
+      "filename": "ding-04.wav",
       "location": "pack",
       "size_bytes": 79258,
       "duration_s": 0.412,
@@ -875,8 +857,8 @@
       ]
     },
     {
-      "path": "pack/ding-5.wav",
-      "filename": "ding-5.wav",
+      "path": "pack/ding-05.wav",
+      "filename": "ding-05.wav",
       "location": "pack",
       "size_bytes": 123934,
       "duration_s": 0.645,
@@ -893,8 +875,8 @@
       ]
     },
     {
-      "path": "pack/ding-6.wav",
-      "filename": "ding-6.wav",
+      "path": "pack/ding-06.wav",
+      "filename": "ding-06.wav",
       "location": "pack",
       "size_bytes": 68006,
       "duration_s": 0.354,
@@ -911,8 +893,8 @@
       ]
     },
     {
-      "path": "pack/ding-7.wav",
-      "filename": "ding-7.wav",
+      "path": "pack/ding-07.wav",
+      "filename": "ding-07.wav",
       "location": "pack",
       "size_bytes": 64966,
       "duration_s": 0.338,
@@ -929,8 +911,26 @@
       ]
     },
     {
-      "path": "pack/ding-8.wav",
-      "filename": "ding-8.wav",
+      "path": "pack/ding-08.wav",
+      "filename": "ding-08.wav",
+      "location": "pack",
+      "size_bytes": 77362,
+      "duration_s": 0.403,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -31.9,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-09.wav",
+      "filename": "ding-09.wav",
       "location": "pack",
       "size_bytes": 123610,
       "duration_s": 0.643,
@@ -947,8 +947,8 @@
       ]
     },
     {
-      "path": "pack/ding-9.wav",
-      "filename": "ding-9.wav",
+      "path": "pack/ding-10.wav",
+      "filename": "ding-10.wav",
       "location": "pack",
       "size_bytes": 106706,
       "duration_s": 0.555,
@@ -956,6 +956,132 @@
       "channels": 2,
       "peak_dbfs": -9.0,
       "mean_dbfs": -30.6,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-11.wav",
+      "filename": "ding-11.wav",
+      "location": "pack",
+      "size_bytes": 55462,
+      "duration_s": 0.288,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -28.4,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-12.wav",
+      "filename": "ding-12.wav",
+      "location": "pack",
+      "size_bytes": 71082,
+      "duration_s": 0.37,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -31.1,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-13.wav",
+      "filename": "ding-13.wav",
+      "location": "pack",
+      "size_bytes": 62394,
+      "duration_s": 0.325,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -32.7,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-14.wav",
+      "filename": "ding-14.wav",
+      "location": "pack",
+      "size_bytes": 75050,
+      "duration_s": 0.39,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -33.2,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-15.wav",
+      "filename": "ding-15.wav",
+      "location": "pack",
+      "size_bytes": 49182,
+      "duration_s": 0.256,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -34.8,
+      "category": "ding",
+      "duration_bucket": "short",
+      "loudness_bucket": "normal",
+      "description": "short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-16.wav",
+      "filename": "ding-16.wav",
+      "location": "pack",
+      "size_bytes": 37082,
+      "duration_s": 0.193,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -29.0,
+      "category": "ding",
+      "duration_bucket": "very-short",
+      "loudness_bucket": "normal",
+      "description": "very-short normal ding",
+      "suggested_slots": [
+        "ding"
+      ]
+    },
+    {
+      "path": "pack/ding-17.wav",
+      "filename": "ding-17.wav",
+      "location": "pack",
+      "size_bytes": 69818,
+      "duration_s": 0.363,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -31.8,
       "category": "ding",
       "duration_bucket": "short",
       "loudness_bucket": "normal",
@@ -1028,6 +1154,42 @@
       "channels": 2,
       "peak_dbfs": -9.0,
       "mean_dbfs": -24.2,
+      "category": "impact",
+      "duration_bucket": "long",
+      "loudness_bucket": "normal",
+      "description": "long normal impact",
+      "suggested_slots": [
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/hook-impact-5.wav",
+      "filename": "hook-impact-5.wav",
+      "location": "pack",
+      "size_bytes": 241290,
+      "duration_s": 1.256,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -23.1,
+      "category": "impact",
+      "duration_bucket": "medium",
+      "loudness_bucket": "normal",
+      "description": "medium normal impact",
+      "suggested_slots": [
+        "hook-impact"
+      ]
+    },
+    {
+      "path": "pack/hook-impact-6.wav",
+      "filename": "hook-impact-6.wav",
+      "location": "pack",
+      "size_bytes": 435330,
+      "duration_s": 2.267,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -39.4,
       "category": "impact",
       "duration_bucket": "long",
       "loudness_bucket": "normal",

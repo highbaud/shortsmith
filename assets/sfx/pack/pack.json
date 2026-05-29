@@ -22,22 +22,31 @@
     "hook-impact-1.wav",
     "hook-impact-2.wav",
     "hook-impact-3.wav",
-    "hook-impact-4.wav"
+    "hook-impact-4.wav",
+    "hook-impact-5.wav",
+    "hook-impact-6.wav"
   ],
   "cash-register": [
     "cash-register-1.wav"
   ],
   "ding": [
-    "ding-1.wav",
-    "ding-2.wav",
-    "ding-3.wav",
-    "ding-4.wav",
-    "ding-5.wav",
-    "ding-6.wav",
-    "ding-7.wav",
-    "ding-8.wav",
-    "ding-9.wav",
-    "ding-10.wav"
+    "ding-01.wav",
+    "ding-02.wav",
+    "ding-03.wav",
+    "ding-04.wav",
+    "ding-05.wav",
+    "ding-06.wav",
+    "ding-07.wav",
+    "ding-08.wav",
+    "ding-09.wav",
+    "ding-10.wav",
+    "ding-11.wav",
+    "ding-12.wav",
+    "ding-13.wav",
+    "ding-14.wav",
+    "ding-15.wav",
+    "ding-16.wav",
+    "ding-17.wav"
   ],
   "whoosh": [
     "whoosh-1.wav",

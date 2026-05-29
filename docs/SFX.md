@@ -22,11 +22,11 @@ Lives at `assets/sfx/pack/` with `pack.json` mapping each slot to one or more va
 
 | Slot | When it fires | Variants (shipped) | Default level |
 |---|---|---|---|
-| `hook-impact` | Once at t=0, on the opening slam | 4 | -9 dBFS (peak), 0.7 × sfx_gain |
+| `hook-impact` | Once at t=0, on the opening slam | 6 | -9 dBFS (peak), 0.7 × sfx_gain |
 | `swipe-in` | At each callout's `local_start` | 11 | 0.55 × sfx_gain |
 | `swipe-out` | At each callout's end (opt-in via `sfx_swipe_out=True`) | 4 | 0.45 × sfx_gain |
 | `cash-register` | First time a money word is spoken in the clip | 1 | 0.85 × sfx_gain |
-| `ding` | On each `bigstat` callout whose text has a number or `$` | 10 | 0.7 × sfx_gain |
+| `ding` | On each `bigstat` callout whose text has a number or `$` | 17 | 0.7 × sfx_gain |
 | `whoosh` | Fallback for generic transitions | 5 | 0.55 × sfx_gain |
 
 Variants rotate per call (see `_VariantRotation` in `shortsmith/sfx.py`)

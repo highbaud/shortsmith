@@ -62,34 +62,44 @@ CURATION: dict[str, list[tuple[str, str]]] = {
         ("whip2.mp3",         "swipe-out-3.wav"),
         ("whip5.mp3",         "swipe-out-4.wav"),
     ],
-    # hook-impact: big at t=0. Bodied camera-whoosh hits + a longer riser
-    # variant for clips that breathe before the first beat lands.
+    # hook-impact: big at t=0. Bodied camera-whoosh hits, a longer riser, a
+    # soft 1.26s icon body, and a 2.4s pop for a brighter-feel impact body.
     "hook-impact": [
         ("CameraWhoosh1.wav",         "hook-impact-1.wav"),
         ("CameraWhoosh.wav",          "hook-impact-2.wav"),
         ("Long Whoosh.wav",           "hook-impact-3.wav"),
         ("Riser to Notification.wav", "hook-impact-4.wav"),
+        ("icon_06.wav",               "hook-impact-5.wav"),
+        ("pop5.wav",                  "hook-impact-6.wav"),
     ],
     # cash-register: iconic kaching. Single sample is plenty (only fires once
     # per clip on the first money word).
     "cash-register": [
         ("cash register kaching.mp3", "cash-register-1.wav"),
     ],
-    # ding: bigstat number reveal. Mix of pitched bells + bright UI taps + a
-    # pop so a 4-bigstat clip cycles through 4 distinct alert sounds.
-    # icon_06,10,11 have decent peaks; quieter icons (-20 dB+) get heavy
-    # post-gain that exposes their noise floor, so they sit out.
+    # ding: bigstat number reveal. Three texture families rotate together —
+    # pitched bells (bell ding, anime shine), bright pops (pop1/pop2),
+    # icon-style UI taps (icon_03/07/08/10/11/13/14/15), and dry mouse-
+    # click taps. Variant rotation means a 4-bigstat clip cycles 4 distinct
+    # alert sounds; large pool keeps long batches non-repetitive.
     "ding": [
-        ("bell ding1.wav",  "ding-1.wav"),
-        ("anime shine.mp3", "ding-2.wav"),
-        ("beep1.wav",       "ding-3.wav"),
-        ("pop1.wav",        "ding-4.wav"),
-        ("pop2.wav",        "ding-5.wav"),
-        ("icon_03.wav",     "ding-6.wav"),
-        ("icon_07.wav",     "ding-7.wav"),
-        ("icon_10.wav",     "ding-8.wav"),
-        ("icon_11.wav",     "ding-9.wav"),
-        ("icon_14.wav",     "ding-10.wav"),
+        ("bell ding1.wav",        "ding-01.wav"),
+        ("anime shine.mp3",       "ding-02.wav"),
+        ("beep1.wav",             "ding-03.wav"),
+        ("pop1.wav",              "ding-04.wav"),
+        ("pop2.wav",              "ding-05.wav"),
+        ("icon_03.wav",           "ding-06.wav"),
+        ("icon_07.wav",           "ding-07.wav"),
+        ("icon_08.wav",           "ding-08.wav"),
+        ("icon_10.wav",           "ding-09.wav"),
+        ("icon_11.wav",           "ding-10.wav"),
+        ("icon_13.wav",           "ding-11.wav"),
+        ("icon_14.wav",           "ding-12.wav"),
+        ("icon_15.wav",           "ding-13.wav"),
+        ("mouse click (3).wav",   "ding-14.wav"),
+        ("mouse click (4).wav",   "ding-15.wav"),
+        ("mouse click (7).wav",   "ding-16.wav"),
+        ("mouse click (8).wav",   "ding-17.wav"),
     ],
     # whoosh: generic transition fallback. Longer / smoother than swipe-in.
     # fastwhoosh is at -29 dBFS in source so it gets heavily gained up;
@@ -101,14 +111,18 @@ CURATION: dict[str, list[tuple[str, str]]] = {
         ("Digital Small whoosh.wav",  "whoosh-4.wav"),
         ("fastwhoosh.wav",            "whoosh-5.wav"),
     ],
-    # Intentionally NOT in any slot (yet):
-    # - mouse click (1-8).wav   no callout-style trigger fires per click
-    # - whip9/10/11/12.wav      source peaks at -20 to -29 dBFS, too noisy
-    # - icon_01/02/04/05/08/09/13/15.wav  ditto, would amplify noise
-    # - icon_06.wav             1.26s sits between ding and impact, no fit
-    # - pop5.wav                2.40s too long for a snappy ding
-    # - gong.mp3                7.64s body would dominate the hook bed
-    # - Errror.wav / windows error.mp3   negative cue, no slot for it
+    # Intentionally NOT in any slot (with reasons — audit on demand):
+    # - mouse click (1).wav       20-second multi-click recording, not a one-shot
+    # - mouse click (2/5/6).wav   shorter/quieter clicks (-10 to -13 dB) —
+    #                             redundant with 3/4/7/8 which are cleaner
+    # - whip9/10/11/12.wav        source peaks at -20 to -29 dBFS; +12 dB+
+    #                             post-gain would expose noise floor under speech
+    # - icon_01/02/04/05/09.wav   same — too quiet at source
+    # - gong.mp3 (7.64s)          body dominates the hook bed; needs a
+    #                             dedicated "stinger" slot or auto-trim
+    #                             (future: end-of-clip cue?)
+    # - Errror.wav / windows error.mp3   negative cues; needs a "wrong
+    #                                    outcome" semantic trigger (future)
 }
 
 
