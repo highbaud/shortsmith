@@ -14,13 +14,17 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
 
-      - uses: astral-sh/setup-uv@v3
+      # setup-uv v6 runs on Node 24 (Node 20 actions are deprecated June 2026)
+      # and accepts `python-version` directly. It installs uv, then provisions
+      # the requested Python via `uv python install` under the hood.
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.12"
+          enable-cache: true
 
       - name: uv sync
         run: uv sync --extra dev
@@ -43,6 +47,11 @@ jobs:
           import shortsmith.reframe
           import shortsmith.scaffold
           import shortsmith.captions
+          import shortsmith.align
+          import shortsmith.normalize
+          import shortsmith.checkpoint
+          import shortsmith.sfx
+          import shortsmith.vfx
           print('OK')
           "
 
@@ -50,4 +59,6 @@ jobs:
         run: uv run shortsmith --help
 
       - name: pytest (unit tests)
-        run: uv run --with pytest --with pytest-mock pytest tests/ -v
+        # pytest + pytest-mock are already installed by `uv sync --extra dev`;
+        # no need to re-add them via --with.
+        run: uv run pytest tests/ -v
