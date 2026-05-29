@@ -1,0 +1,25 @@
+{
+  "swipe-in": [
+    "swipe-in-1.wav",
+    "swipe-in-2.wav",
+    "swipe-in-3.wav",
+    "swipe-in-4.wav"
+  ],
+  "swipe-out": [
+    "swipe-out-1.wav",
+    "swipe-out-2.wav"
+  ],
+  "hook-impact": [
+    "hook-impact-1.wav"
+  ],
+  "cash-register": [
+    "cash-register-1.wav"
+  ],
+  "ding": [
+    "ding-1.wav",
+    "ding-2.wav"
+  ],
+  "whoosh": [
+    "whoosh-1.wav"
+  ]
+}

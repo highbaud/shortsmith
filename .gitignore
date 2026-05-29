@@ -44,3 +44,11 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+
+# Node / Remotion
+remotion/node_modules/
+node_modules/
+npm-debug.log*
+
+# Remotion auto-derived b-roll picks (regenerated per render)
+**/broll.auto.json
