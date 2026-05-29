@@ -108,7 +108,11 @@ def process(proj: Path, freeze: bool, force: bool) -> bool:
     if not deliv:
         return False
     marker = proj / "renders" / ".thumb_done"
-    if marker.exists() and not force:
+    # Skip only if the thumbnail is still current. If the deliverable was
+    # regenerated later (e.g. finalize --force-remotion), the marker is stale and
+    # we must re-thumbnail, or the new video ships with no cover.
+    if (marker.exists() and not force
+            and marker.stat().st_mtime >= deliv.stat().st_mtime):
         return False
     dur = rr._probe_duration(deliv)
     hook_t = _hook_time(proj, dur)
