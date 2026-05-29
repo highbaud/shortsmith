@@ -13,6 +13,8 @@ Structural (tied to on-screen motion, deterministic):
 
 Semantic (tied to speech; "sparing" mode by default):
   * cash-register on the first money-word in the clip
+  * wrong-answer on the first negative-outcome word in the clip
+                 (lose / crashed / scam / rugged / bankrupt / ...)
   * ding         on each bigstat callout whose text has a number / $
 
 Any SFX slot with no file present in SFX_DIR is silently skipped, so partial
@@ -31,7 +33,8 @@ from .config import SFX_DIR, Config
 
 log = logging.getLogger(__name__)
 
-SLOTS = ("swipe-in", "swipe-out", "hook-impact", "cash-register", "ding", "whoosh")
+SLOTS = ("swipe-in", "swipe-out", "hook-impact", "cash-register",
+         "wrong-answer", "ding", "whoosh")
 _AUDIO_EXTS = (".wav", ".mp3", ".m4a", ".ogg", ".flac", ".aac")
 _NUMBER_RE = re.compile(r"[\$£€]|\d")
 
@@ -137,6 +140,25 @@ def plan_events(clip: dict, words: list[dict], sfx_map: dict[str, list[Path]],
                     events.append(SfxEvent(t, "cash-register", g("cash-register")))
                     if mode == "sparing":
                         break  # only the first money mention
+
+    # --- Negative outcome -> wrong-answer ---
+    # Fires on the first (or every, depending on mode) negative-outcome word in
+    # the speech. Examples: "crashed", "scammed", "rugged", "bankrupt",
+    # "wrong". A sparring/quiz-show "err" cue that says "the bad thing
+    # happened" — opt-in by populating negative_keywords + dropping
+    # wrong-answer files into the pack.
+    if semantic_on and have("wrong-answer") and words:
+        negatives = {m.lower() for m in getattr(cfg, "negative_keywords", [])}
+        mode = (getattr(cfg, "sfx_semantic_mode", "sparing") or "sparing").lower()
+        if negatives:
+            for w in words:
+                stem = _norm_word(w)
+                if stem in negatives:
+                    t = float(w.get("start", 0.0))
+                    if 0.0 <= t <= clip_duration:
+                        events.append(SfxEvent(t, "wrong-answer", g("wrong-answer")))
+                        if mode == "sparing":
+                            break  # only the first negative word
 
     # De-dup near-identical (same slot within 80ms) and sort by time.
     events.sort(key=lambda e: (e.t, e.slot))

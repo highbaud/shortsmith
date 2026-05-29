@@ -77,6 +77,15 @@ CURATION: dict[str, list[tuple[str, str]]] = {
     "cash-register": [
         ("cash register kaching.mp3", "cash-register-1.wav"),
     ],
+    # wrong-answer: negative-outcome cue. Fires once per clip on the first
+    # negative-keyword word in the speech (lose / crashed / scammed / etc.).
+    # Quiz-show buzz feel — punctuates "the bad thing happened" without
+    # piling on. Two distinct error textures so back-to-back shorts in a
+    # batch don't ring the same buzz.
+    "wrong-answer": [
+        ("Errror.wav",         "wrong-answer-1.wav"),
+        ("windows error.mp3",  "wrong-answer-2.wav"),
+    ],
     # ding: bigstat number reveal. Three texture families rotate together —
     # pitched bells (bell ding, anime shine), bright pops (pop1/pop2),
     # icon-style UI taps (icon_03/07/08/10/11/13/14/15), and dry mouse-
@@ -112,17 +121,13 @@ CURATION: dict[str, list[tuple[str, str]]] = {
         ("fastwhoosh.wav",            "whoosh-5.wav"),
     ],
     # Intentionally NOT in any slot (with reasons — audit on demand):
-    # - mouse click (1).wav       20-second multi-click recording, not a one-shot
-    # - mouse click (2/5/6).wav   shorter/quieter clicks (-10 to -13 dB) —
-    #                             redundant with 3/4/7/8 which are cleaner
-    # - whip9/10/11/12.wav        source peaks at -20 to -29 dBFS; +12 dB+
-    #                             post-gain would expose noise floor under speech
-    # - icon_01/02/04/05/09.wav   same — too quiet at source
     # - gong.mp3 (7.64s)          body dominates the hook bed; needs a
     #                             dedicated "stinger" slot or auto-trim
-    #                             (future: end-of-clip cue?)
-    # - Errror.wav / windows error.mp3   negative cues; needs a "wrong
-    #                                    outcome" semantic trigger (future)
+    #                             (future: end-of-clip cue)
+    #
+    # The previous round of exclusions (low-peak whips/icons and redundant
+    # mouse-clicks) have been deleted from assets/sfx/. Errror.wav and
+    # windows error.mp3 now feed the wrong-answer slot above.
 }
 
 

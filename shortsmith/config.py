@@ -162,17 +162,34 @@ class Config:
         "swipe-out": 0.45,
         "hook-impact": 0.7,
         "cash-register": 0.85,
+        "wrong-answer": 0.7,
         "ding": 0.7,
         "whoosh": 0.55,
     })
     # "sparing" = cash-register only on first money mention, ding only on
-    # bigstat $ callouts. "every" = every match. "off" = structural swipes only.
+    # bigstat $ callouts, wrong-answer only on first negative word.
+    # "every" = every match. "off" = structural swipes only.
     sfx_semantic_mode: str = os.environ.get("SHORTSMITH_SFX_SEMANTIC", "sparing")
     money_keywords: list[str] = field(default_factory=lambda: [
         "money", "cash", "dollar", "dollars", "rich", "wealth", "wealthy",
         "thousand", "thousands", "million", "millions", "millionaire",
         "billion", "billions", "billionaire", "trillion", "trillions",
         "fortune", "profit", "profits", "payday",
+    ])
+    # Negative-outcome words that trigger the wrong-answer slot. Tuned for
+    # crypto/finance livestream content — the moment a clip names the bad
+    # outcome ("crashed", "rugged", "scammed", "bankrupt") the error buzz
+    # punctuates the beat. Sparring/quiz-show feel rather than mean-spirited.
+    negative_keywords: list[str] = field(default_factory=lambda: [
+        "wrong", "incorrect",
+        "lose", "lost", "loses", "losing", "loss", "losses",
+        "crash", "crashed", "crashes", "crashing",
+        "rug", "rugged", "rugpull", "rugpulled",
+        "scam", "scams", "scammed", "scammer", "scammers",
+        "fail", "failed", "fails", "failing", "failure",
+        "bankrupt", "bankruptcy", "broke", "busted",
+        "dumped", "dumping",
+        "rekt", "rip",
     ])
 
     # Audio enhancement.

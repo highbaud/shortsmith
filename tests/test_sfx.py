@@ -8,7 +8,8 @@ from shortsmith.sfx import plan_events
 
 # Pretend every slot has a file.
 FULL_MAP = {s: Path(f"{s}.wav") for s in
-            ("swipe-in", "swipe-out", "hook-impact", "cash-register", "ding", "whoosh")}
+            ("swipe-in", "swipe-out", "hook-impact", "cash-register",
+             "wrong-answer", "ding", "whoosh")}
 
 
 def _words(spec):
@@ -85,10 +86,50 @@ def test_off_mode_structural_only():
     cfg = Config()
     cfg.sfx_semantic_mode = "off"
     clip = {"callouts": [{"local_start": 5.0, "duration": 2.0, "text": "$1M", "style": "bigstat"}]}
-    words = _words([("million", 1.0, 1.5)])
+    words = _words([("million", 1.0, 1.5), ("crashed", 4.0, 4.5)])
     ev = plan_events(clip, words, FULL_MAP, cfg, 30.0)
     assert all(e.slot in ("swipe-in", "swipe-out", "hook-impact") for e in ev)
-    assert not any(e.slot in ("cash-register", "ding") for e in ev)
+    assert not any(e.slot in ("cash-register", "ding", "wrong-answer") for e in ev)
+
+
+def test_sparing_wrong_answer_first_negative_only():
+    cfg = Config()
+    cfg.sfx_semantic_mode = "sparing"
+    words = _words([
+        ("the", 0.0, 0.1), ("market", 0.2, 0.5),
+        ("crashed", 1.0, 1.4),                          # first negative — fires
+        ("everyone", 5.0, 5.4), ("got", 5.5, 5.7),
+        ("rugged", 6.0, 6.4),                           # second — suppressed in sparing
+    ])
+    ev = plan_events({"callouts": []}, words, FULL_MAP, cfg, 30.0)
+    wa = [e for e in ev if e.slot == "wrong-answer"]
+    assert len(wa) == 1
+    assert abs(wa[0].t - 1.0) < 0.01
+
+
+def test_every_mode_multiple_wrong_answers():
+    cfg = Config()
+    cfg.sfx_semantic_mode = "every"
+    words = _words([("crashed", 1.0, 1.4), ("scammed", 6.0, 6.4), ("rekt", 12.0, 12.4)])
+    ev = plan_events({"callouts": []}, words, FULL_MAP, cfg, 30.0)
+    assert len([e for e in ev if e.slot == "wrong-answer"]) == 3
+
+
+def test_wrong_answer_punctuation_stripped():
+    # "crashed," with a trailing comma should still match the keyword list.
+    cfg = Config()
+    words = _words([("crashed,", 1.0, 1.4)])
+    ev = plan_events({"callouts": []}, words, FULL_MAP, cfg, 30.0)
+    assert any(e.slot == "wrong-answer" for e in ev)
+
+
+def test_wrong_answer_skipped_when_slot_missing():
+    # If pack.json has no wrong-answer entry, the trigger must silently skip.
+    partial = {s: Path(f"{s}.wav") for s in
+               ("swipe-in", "hook-impact", "cash-register", "ding", "whoosh")}
+    words = _words([("crashed", 1.0, 1.4)])
+    ev = plan_events({"callouts": []}, words, partial, Config(), 30.0)
+    assert not any(e.slot == "wrong-answer" for e in ev)
 
 
 def test_missing_slots_are_skipped():

@@ -29,6 +29,10 @@
   "cash-register": [
     "cash-register-1.wav"
   ],
+  "wrong-answer": [
+    "wrong-answer-1.wav",
+    "wrong-answer-2.wav"
+  ],
   "ding": [
     "ding-01.wav",
     "ding-02.wav",

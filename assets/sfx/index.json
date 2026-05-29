@@ -1,8 +1,23 @@
 {
   "version": 1,
-  "generated_at": "2026-05-29T04:33:51+00:00",
+  "generated_at": "2026-05-29T04:38:45+00:00",
   "root": "F:/Claude Code/shortsmith/assets/sfx",
   "slot_definitions": {
+    "wrong-answer": {
+      "trigger": "First negative-outcome word in a clip (crashed, scammed, rugged, bankrupt, ...). Quiz-show buzz feel rather than mean-spirited.",
+      "ideal_duration_s": [
+        0.5,
+        2.0
+      ],
+      "level_dbfs_under_voice": [
+        8,
+        14
+      ],
+      "categories_preferred": [
+        "error"
+      ],
+      "notes": "Classic error/buzz texture. Fires once per clip in sparing mode."
+    },
     "swipe-in": {
       "trigger": "Played on callout/text appearing (Hyperframes slam-in).",
       "ideal_duration_s": [
@@ -141,11 +156,15 @@
     "riser": [
       "hook-impact"
     ],
-    "click": [],
+    "click": [
+      "ding"
+    ],
     "pop": [
       "ding"
     ],
-    "error": [],
+    "error": [
+      "wrong-answer"
+    ],
     "ui": [
       "ding",
       "swipe-in"
@@ -356,44 +375,6 @@
       ]
     },
     {
-      "path": "icon_01.wav",
-      "filename": "icon_01.wav",
-      "location": "raw",
-      "size_bytes": 86966,
-      "duration_s": 0.295,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -21.0,
-      "mean_dbfs": -38.6,
-      "category": "ui",
-      "duration_bucket": "short",
-      "loudness_bucket": "quiet",
-      "description": "short quiet ui",
-      "suggested_slots": [
-        "ding",
-        "swipe-in"
-      ]
-    },
-    {
-      "path": "icon_02.wav",
-      "filename": "icon_02.wav",
-      "location": "raw",
-      "size_bytes": 72356,
-      "duration_s": 0.244,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -21.7,
-      "mean_dbfs": -33.8,
-      "category": "ui",
-      "duration_bucket": "very-short",
-      "loudness_bucket": "quiet",
-      "description": "very-short quiet ui",
-      "suggested_slots": [
-        "ding",
-        "swipe-in"
-      ]
-    },
-    {
       "path": "icon_03.wav",
       "filename": "icon_03.wav",
       "location": "raw",
@@ -407,44 +388,6 @@
       "duration_bucket": "short",
       "loudness_bucket": "soft",
       "description": "short soft ui",
-      "suggested_slots": [
-        "ding",
-        "swipe-in"
-      ]
-    },
-    {
-      "path": "icon_04.wav",
-      "filename": "icon_04.wav",
-      "location": "raw",
-      "size_bytes": 80852,
-      "duration_s": 0.274,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -24.2,
-      "mean_dbfs": -39.9,
-      "category": "ui",
-      "duration_bucket": "short",
-      "loudness_bucket": "quiet",
-      "description": "short quiet ui",
-      "suggested_slots": [
-        "ding",
-        "swipe-in"
-      ]
-    },
-    {
-      "path": "icon_05.wav",
-      "filename": "icon_05.wav",
-      "location": "raw",
-      "size_bytes": 68480,
-      "duration_s": 0.23,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -25.0,
-      "mean_dbfs": -35.6,
-      "category": "ui",
-      "duration_bucket": "very-short",
-      "loudness_bucket": "quiet",
-      "description": "very-short quiet ui",
       "suggested_slots": [
         "ding",
         "swipe-in"
@@ -501,25 +444,6 @@
       "duration_bucket": "short",
       "loudness_bucket": "soft",
       "description": "short soft ui",
-      "suggested_slots": [
-        "ding",
-        "swipe-in"
-      ]
-    },
-    {
-      "path": "icon_09.wav",
-      "filename": "icon_09.wav",
-      "location": "raw",
-      "size_bytes": 118050,
-      "duration_s": 0.403,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -26.3,
-      "mean_dbfs": -45.7,
-      "category": "ui",
-      "duration_bucket": "short",
-      "loudness_bucket": "quiet",
-      "description": "short quiet ui",
       "suggested_slots": [
         "ding",
         "swipe-in"
@@ -639,38 +563,6 @@
       ]
     },
     {
-      "path": "mouse click (1).wav",
-      "filename": "mouse click (1).wav",
-      "location": "raw",
-      "size_bytes": 2880044,
-      "duration_s": 20.0,
-      "sample_rate": 48000,
-      "channels": 1,
-      "peak_dbfs": -7.3,
-      "mean_dbfs": -43.5,
-      "category": "click",
-      "duration_bucket": "long",
-      "loudness_bucket": "normal",
-      "description": "long normal click",
-      "suggested_slots": []
-    },
-    {
-      "path": "mouse click (2).wav",
-      "filename": "mouse click (2).wav",
-      "location": "raw",
-      "size_bytes": 35068,
-      "duration_s": 0.115,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -10.5,
-      "mean_dbfs": -27.8,
-      "category": "click",
-      "duration_bucket": "very-short",
-      "loudness_bucket": "soft",
-      "description": "very-short soft click",
-      "suggested_slots": []
-    },
-    {
       "path": "mouse click (3).wav",
       "filename": "mouse click (3).wav",
       "location": "raw",
@@ -684,7 +576,9 @@
       "duration_bucket": "short",
       "loudness_bucket": "soft",
       "description": "short soft click",
-      "suggested_slots": []
+      "suggested_slots": [
+        "ding"
+      ]
     },
     {
       "path": "mouse click (4).wav",
@@ -700,39 +594,9 @@
       "duration_bucket": "short",
       "loudness_bucket": "soft",
       "description": "short soft click",
-      "suggested_slots": []
-    },
-    {
-      "path": "mouse click (5).wav",
-      "filename": "mouse click (5).wav",
-      "location": "raw",
-      "size_bytes": 95802,
-      "duration_s": 0.325,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -12.1,
-      "mean_dbfs": -37.7,
-      "category": "click",
-      "duration_bucket": "short",
-      "loudness_bucket": "soft",
-      "description": "short soft click",
-      "suggested_slots": []
-    },
-    {
-      "path": "mouse click (6).wav",
-      "filename": "mouse click (6).wav",
-      "location": "raw",
-      "size_bytes": 70932,
-      "duration_s": 0.239,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -12.9,
-      "mean_dbfs": -36.1,
-      "category": "click",
-      "duration_bucket": "very-short",
-      "loudness_bucket": "soft",
-      "description": "very-short soft click",
-      "suggested_slots": []
+      "suggested_slots": [
+        "ding"
+      ]
     },
     {
       "path": "mouse click (7).wav",
@@ -748,7 +612,9 @@
       "duration_bucket": "very-short",
       "loudness_bucket": "normal",
       "description": "very-short normal click",
-      "suggested_slots": []
+      "suggested_slots": [
+        "ding"
+      ]
     },
     {
       "path": "mouse click (8).wav",
@@ -764,7 +630,9 @@
       "duration_bucket": "short",
       "loudness_bucket": "normal",
       "description": "short normal click",
-      "suggested_slots": []
+      "suggested_slots": [
+        "ding"
+      ]
     },
     {
       "path": "pack/cash-register-1.wav",
@@ -1610,6 +1478,38 @@
       ]
     },
     {
+      "path": "pack/wrong-answer-1.wav",
+      "filename": "wrong-answer-1.wav",
+      "location": "pack",
+      "size_bytes": 255862,
+      "duration_s": 1.332,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -30.0,
+      "category": "unknown",
+      "duration_bucket": "medium",
+      "loudness_bucket": "normal",
+      "description": "medium normal unknown",
+      "suggested_slots": []
+    },
+    {
+      "path": "pack/wrong-answer-2.wav",
+      "filename": "wrong-answer-2.wav",
+      "location": "pack",
+      "size_bytes": 258266,
+      "duration_s": 1.345,
+      "sample_rate": 48000,
+      "channels": 2,
+      "peak_dbfs": -9.0,
+      "mean_dbfs": -27.0,
+      "category": "unknown",
+      "duration_bucket": "medium",
+      "loudness_bucket": "normal",
+      "description": "medium normal unknown",
+      "suggested_slots": []
+    },
+    {
       "path": "pop1.wav",
       "filename": "pop1.wav",
       "location": "raw",
@@ -1783,63 +1683,6 @@
       ]
     },
     {
-      "path": "whip10.wav",
-      "filename": "whip10.wav",
-      "location": "raw",
-      "size_bytes": 382006,
-      "duration_s": 1.319,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -7.9,
-      "mean_dbfs": -33.0,
-      "category": "whip",
-      "duration_bucket": "medium",
-      "loudness_bucket": "normal",
-      "description": "medium normal whip",
-      "suggested_slots": [
-        "swipe-in",
-        "swipe-out"
-      ]
-    },
-    {
-      "path": "whip11.wav",
-      "filename": "whip11.wav",
-      "location": "raw",
-      "size_bytes": 183530,
-      "duration_s": 0.63,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -23.3,
-      "mean_dbfs": -40.8,
-      "category": "whip",
-      "duration_bucket": "medium",
-      "loudness_bucket": "quiet",
-      "description": "medium quiet whip",
-      "suggested_slots": [
-        "swipe-in",
-        "swipe-out"
-      ]
-    },
-    {
-      "path": "whip12.wav",
-      "filename": "whip12.wav",
-      "location": "raw",
-      "size_bytes": 92434,
-      "duration_s": 0.314,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -19.8,
-      "mean_dbfs": -39.0,
-      "category": "whip",
-      "duration_bucket": "short",
-      "loudness_bucket": "quiet",
-      "description": "short quiet whip",
-      "suggested_slots": [
-        "swipe-in",
-        "swipe-out"
-      ]
-    },
-    {
       "path": "whip2.mp3",
       "filename": "whip2.mp3",
       "location": "raw",
@@ -1973,25 +1816,6 @@
       ]
     },
     {
-      "path": "whip9.wav",
-      "filename": "whip9.wav",
-      "location": "raw",
-      "size_bytes": 185214,
-      "duration_s": 0.636,
-      "sample_rate": 48000,
-      "channels": 2,
-      "peak_dbfs": -21.5,
-      "mean_dbfs": -35.0,
-      "category": "whip",
-      "duration_bucket": "medium",
-      "loudness_bucket": "quiet",
-      "description": "medium quiet whip",
-      "suggested_slots": [
-        "swipe-in",
-        "swipe-out"
-      ]
-    },
-    {
       "path": "whipdouble.wav",
       "filename": "whipdouble.wav",
       "location": "raw",
@@ -2024,7 +1848,9 @@
       "duration_bucket": "long",
       "loudness_bucket": "normal",
       "description": "long normal error",
-      "suggested_slots": []
+      "suggested_slots": [
+        "wrong-answer"
+      ]
     }
   ]
 }

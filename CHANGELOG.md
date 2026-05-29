@@ -18,14 +18,18 @@ All notable changes to this project will be documented in this file.
   `assets/sfx/CATALOG.md` (human-readable, grouped by slot). Makes
   choosing which raw drop fills which slot a lookup rather than a listen.
 - **Expanded SFX pack** — `scripts/build_sfx_pack.py` curation now ships
-  **44** normalized variants (was 11), informed by the new index:
-  swipe-in 11, swipe-out 4, hook-impact 6 (+ icon_06 soft body, pop5
-  brighter body), cash-register 1, ding 17 (bells + anime-shine + beep
-  + 2 pops + 8 icon taps + 4 mouse-click UI taps), whoosh 5. Every
-  raw drop with a clean source peak (≤ -10 dBFS) is now in rotation;
-  excluded files (very-quiet whips/icons, gong, error sounds,
-  redundant mouse-clicks) are documented inline in CURATION with
-  reasons audit-able on demand.
+  **46** normalized variants (was 11) across 7 slots. Every raw drop
+  with a clean source peak (≤ -10 dBFS) is now in rotation; unusable
+  drops (very-quiet whips/icons, redundant mouse-clicks) were deleted
+  from `assets/sfx/`. Only `gong.mp3` stays excluded with a documented
+  reason (needs a future "stinger" slot).
+- **New `wrong-answer` SFX slot** — semantic trigger that fires on the
+  first negative-outcome word in a clip (crashed / scammed / rugged /
+  bankrupt / rekt / ...). Tuned for crypto-finance content; configurable
+  via `Config.negative_keywords`. Quiz-show buzz feel — punctuates "the
+  bad thing happened" without piling on. Respects `sfx_semantic_mode`
+  (sparing/every/off). Shipped variants: `Errror.wav` + `windows error.mp3`.
+  4 new tests; total now 49.
 
 ### Changed
 - `.gitignore` excludes `.claude/` (local Claude Code session state).

@@ -26,8 +26,14 @@ Lives at `assets/sfx/pack/` with `pack.json` mapping each slot to one or more va
 | `swipe-in` | At each callout's `local_start` | 11 | 0.55 × sfx_gain |
 | `swipe-out` | At each callout's end (opt-in via `sfx_swipe_out=True`) | 4 | 0.45 × sfx_gain |
 | `cash-register` | First time a money word is spoken in the clip | 1 | 0.85 × sfx_gain |
+| `wrong-answer` | First time a negative-outcome word is spoken (crashed, scammed, rugged, bankrupt, ...) | 2 | 0.7 × sfx_gain |
 | `ding` | On each `bigstat` callout whose text has a number or `$` | 17 | 0.7 × sfx_gain |
 | `whoosh` | Fallback for generic transitions | 5 | 0.55 × sfx_gain |
+
+`wrong-answer`'s negative-word list lives in `Config.negative_keywords`
+(`shortsmith/config.py`) — tuned for crypto/finance content
+(lose / crashed / scam / rugged / bankrupt / rekt / etc.). Quiz-show buzz
+feel that punctuates "the bad thing happened" without overdoing it.
 
 Variants rotate per call (see `_VariantRotation` in `shortsmith/sfx.py`)
 so a clip with 5 callouts cycles through 5 different swipe-in sounds.

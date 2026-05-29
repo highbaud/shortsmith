@@ -78,6 +78,15 @@ CATEGORY_KEYWORDS: list[tuple[str, str]] = [
 # what kind of one-shot belongs there (level cue, ideal duration, which
 # categories typically map in).
 SLOT_DEFINITIONS: dict[str, dict] = {
+    "wrong-answer": {
+        "trigger": ("First negative-outcome word in a clip "
+                    "(crashed, scammed, rugged, bankrupt, ...). Quiz-show "
+                    "buzz feel rather than mean-spirited."),
+        "ideal_duration_s": [0.5, 2.0],
+        "level_dbfs_under_voice": [8, 14],
+        "categories_preferred": ["error"],
+        "notes": "Classic error/buzz texture. Fires once per clip in sparing mode.",
+    },
     "swipe-in": {
         "trigger": "Played on callout/text appearing (Hyperframes slam-in).",
         "ideal_duration_s": [0.15, 0.55],
@@ -134,9 +143,9 @@ CATEGORY_TO_SLOTS: dict[str, list[str]] = {
     "camera":     ["hook-impact", "whoosh"],
     "impact":      ["hook-impact"],
     "riser":       ["hook-impact"],
-    "click":       [],   # not currently mapped to a slot — reserved for future use
+    "click":       ["ding"],   # mouse-click family promoted into ding rotation
     "pop":         ["ding"],   # short bright pop can sub for a ding in a pinch
-    "error":       [],   # negative cue — not mapped to any current slot
+    "error":       ["wrong-answer"],  # negative cue -> wrong-answer slot
     "ui":          ["ding", "swipe-in"],
     "unknown":     [],
 }
