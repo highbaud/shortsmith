@@ -76,3 +76,12 @@ npm-debug.log*
 PROJECT_STATE.md
 *.local.md
 /private/
+
+# Publishing / scheduling working files (personal: brand ids, Drive maps, calendars).
+# Generated locally per run; never commit.
+.drive-map.json
+*.drive-map.json
+.week1-*.json
+.ff-week1-*.json
+_build_*.py
+metricool_payloads*.json
