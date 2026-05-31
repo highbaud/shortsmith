@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generated_at": "2026-05-29T04:38:45+00:00",
-  "root": "F:/Claude Code/shortsmith/assets/sfx",
+  "root": "assets/sfx",
   "slot_definitions": {
     "wrong-answer": {
       "trigger": "First negative-outcome word in a clip (crashed, scammed, rugged, bankrupt, ...). Quiz-show buzz feel rather than mean-spirited.",
