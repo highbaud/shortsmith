@@ -34,6 +34,10 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("Stripe secret key",    re.compile(r"sk_live_[A-Za-z0-9]{20,}")),
     ("AWS access key ID",    re.compile(r"AKIA[0-9A-Z]{16}")),
     ("Bearer token",         re.compile(r"Bearer\s+[A-Za-z0-9._\-]{30,}")),
+    # Machine-specific absolute path (workspace root). Not a secret, but it
+    # leaks a local layout and breaks a fresh clone — keep it out of tracked
+    # files; use repo-relative paths / env vars instead.
+    ("Machine-specific path", re.compile(r"[A-Za-z]:[\\/]Claude Code")),
     # Generic high-entropy keyword + value pair. Looks for VAR_NAME=value
     # patterns where VAR_NAME contains TOKEN / SECRET / PASSWORD / KEY and
     # the value is a long opaque blob. Excludes obvious env-var-name-only
@@ -109,7 +113,7 @@ def main(argv: list[str]) -> int:
 
     if total:
         print(
-            f"\nERROR: {total} potential secret(s) found in staged files.\n"
+            f"\nERROR: {total} potential secret(s) / machine-specific path(s) found in staged files.\n"
             "  - If the match is a real credential: remove it, rotate the\n"
             "    token, store it in .env (gitignored), and re-stage.\n"
             "  - If it's a false positive (example/test value): add a\n"

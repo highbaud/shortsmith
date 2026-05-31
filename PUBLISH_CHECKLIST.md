@@ -11,13 +11,13 @@ through ~40 source videos. Check `work/batch_pipeline_new.log`. When it shows
 
 ## 2. Move `audio-enhance/` in-tree
 
-Currently `audio-enhance/` lives at `F:/Claude Code/audio-enhance/` and the
-running batch reaches it via the `SHORTSMITH_AUDIO_ENHANCE` entry in `.env`.
+Currently `audio-enhance/` lives outside the repo (at the path in the
+`SHORTSMITH_AUDIO_ENHANCE` entry of `.env`) and the running batch reaches it there.
 Once the batch is done:
 
 ```powershell
 # From shortsmith repo root (PowerShell):
-Copy-Item -Recurse "F:/Claude Code/audio-enhance" ".\audio-enhance"
+Copy-Item -Recurse "$env:SHORTSMITH_AUDIO_ENHANCE" ".\audio-enhance"
 Remove-Item -Recurse -Force .\audio-enhance\.venv -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force .\audio-enhance\checkpoints -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force .\audio-enhance\test -ErrorAction SilentlyContinue
@@ -26,7 +26,7 @@ Remove-Item -Recurse -Force .\audio-enhance\test -ErrorAction SilentlyContinue
 Or bash equivalent:
 
 ```bash
-cp -r "F:/Claude Code/audio-enhance" ./audio-enhance
+cp -r "$SHORTSMITH_AUDIO_ENHANCE" ./audio-enhance
 rm -rf audio-enhance/.venv audio-enhance/checkpoints audio-enhance/test
 ```
 

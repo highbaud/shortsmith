@@ -334,10 +334,18 @@ def main() -> int:
 
     files = scan(sfx_root)
 
+    # Repo-relative root so the committed index.json stays portable and never
+    # bakes in a machine-specific absolute path.
+    try:
+        from shortsmith.config import REPO_ROOT
+        root_str = sfx_root.relative_to(REPO_ROOT).as_posix()
+    except Exception:
+        root_str = sfx_root.name
+
     index = {
         "version": 1,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "root": sfx_root.as_posix(),
+        "root": root_str,
         "slot_definitions": SLOT_DEFINITIONS,
         "category_to_slots": CATEGORY_TO_SLOTS,
         "files": files,
