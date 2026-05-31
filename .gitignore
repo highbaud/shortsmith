@@ -77,11 +77,12 @@ PROJECT_STATE.md
 *.local.md
 /private/
 
-# Publishing / scheduling working files (personal: brand ids, Drive maps, calendars).
-# Generated locally per run; never commit.
-.drive-map.json
-*.drive-map.json
-.week1-*.json
-.ff-week1-*.json
-_build_*.py
+# Publishing / scheduling working files (personal: brand ids, Drive maps,
+# calendars, X rankings). Generated locally per run; never commit.
+# Root-level hidden JSON catches .drive-map.json, .week1-*.json, .x60.json, etc.
+/.*.json
 metricool_payloads*.json
+_build_*.py
+# Root-level ad-hoc throwaway scripts (e.g. _x60_pick.py). Anchored to repo root
+# so it never matches tracked package modules like shortsmith/_doctor.py.
+/_*.py

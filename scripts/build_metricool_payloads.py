@@ -141,7 +141,7 @@ def main() -> int:
 
     slots = _slots(start, args.per_day, times, len(items), args.tz)
     payloads = []
-    for it, (iso, pub) in zip(items, slots):
+    for it, (iso, pub) in zip(items, slots, strict=False):
         info = {
             "autoPublish": True, "draft": False,
             "text": it["caption"],
