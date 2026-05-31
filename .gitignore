@@ -71,3 +71,8 @@ npm-debug.log*
 # detect-secrets baseline scan artifact (committed elsewhere is fine, but
 # the per-machine cache is not)
 .secrets.cache/
+
+# Internal / machine-specific handoff notes — never publish
+PROJECT_STATE.md
+*.local.md
+/private/
