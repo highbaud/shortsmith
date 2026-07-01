@@ -86,3 +86,26 @@ _build_*.py
 # Root-level ad-hoc throwaway scripts (e.g. _x60_pick.py). Anchored to repo root
 # so it never matches tracked package modules like shortsmith/_doctor.py.
 /_*.py
+
+# More local publishing/scheduling state (personal: Drive file-id maps, the
+# what-was-scheduled ledger, cleanup notes, downloaded thumbnails).
+/.drive-ids*.txt
+/scheduled_ledger.json
+/.metricool-cleanup-checklist.txt
+/.tiktok-jpg/
+
+# One-off personal schedule builders (brand ids + campaign specifics baked in).
+# Generic, reusable scripts (ingest_premade.py, finalize_slugs.py, ...) ARE
+# committed — only the per-campaign builders stay local.
+scripts/build_premade_podcast_schedule.py
+scripts/build_wfaa_schedule.py
+scripts/build_reslot_exec.py
+scripts/build_ledger.py
+scripts/plan_next.py
+scripts/record_scheduled.py
+
+# Per-repo security-gate install (see projects/security-gate — installed
+# locally, not part of the public shortsmith repo)
+/.githooks/
+/SECURITY-CHECKLIST.md
+scripts/security-gate.sh

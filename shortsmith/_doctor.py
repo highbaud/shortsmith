@@ -120,18 +120,20 @@ def doctor() -> int:
 
     # --- Hyperframes kit ---------------------------------------------------
     click.echo("\nHyperframes kit")
-    if KIT_ROOT.exists() and (KIT_ROOT / "package.json").exists():
-        _row(OK, f"kit submodule initialised ({KIT_ROOT})")
-        node_modules = KIT_ROOT / "node_modules"
-        if node_modules.exists():
-            _row(OK, "kit node_modules installed")
-        else:
+    # A working kit needs the directory + its video-projects/ tree. Some kit
+    # layouts ship a root package.json + node_modules (npx resolves hyperframes
+    # locally); slimmed kits rely on npx resolving hyperframes globally — both
+    # render fine, so package.json is NOT required for an OK here.
+    if KIT_ROOT.exists() and (KIT_ROOT / "video-projects").exists():
+        _row(OK, f"kit present ({KIT_ROOT})")
+        if (KIT_ROOT / "package.json").exists() and not (KIT_ROOT / "node_modules").exists():
             _row(WARN, "kit node_modules missing",
                  f"Run: cd '{KIT_ROOT}' && npm install")
     else:
         fails += 1
-        _row(FAIL, f"kit submodule not initialised at {KIT_ROOT}",
-             "Run: git submodule update --init --recursive")
+        _row(FAIL, f"kit not found at {KIT_ROOT}",
+             "Run: git submodule update --init --recursive "
+             "(or set SHORTSMITH_KIT_ROOT to an existing kit)")
     if TEMPLATE_REF.exists():
         _row(OK, "may-shorts-19 template reference present")
     else:
@@ -176,10 +178,14 @@ def doctor() -> int:
         if cfg.anthropic_api_key:
             _row(OK, "ANTHROPIC_API_KEY set (Claude clip selection)")
         else:
-            fails += 1
-            _row(FAIL, "ANTHROPIC_API_KEY missing (engine=anthropic)",
-                 "Add to .env, or pick a different engine: "
-                 "SHORTSMITH_CLIP_ENGINE=ollama")
+            # Only step 2 (find clips) needs the key; the manual workflow
+            # (`shortsmith transcribe` + hand-written clips.json + `run
+            # --from-step 3`) never touches the API. Warn, don't fail.
+            _row(WARN, "ANTHROPIC_API_KEY missing (engine=anthropic)",
+                 "Needed only for automatic clip-finding (step 2). Add to .env, "
+                 "switch engines (SHORTSMITH_CLIP_ENGINE=ollama), or pick clips "
+                 "manually: `shortsmith transcribe` then write clips.json and "
+                 "resume with `run --from-step 3`.")
     else:
         _row(OK, f"engine={cfg.clip_engine} (no Anthropic key required)")
         _row(WARN, f"local-LLM target: {cfg.local_llm_url} model={cfg.local_llm_model}",
