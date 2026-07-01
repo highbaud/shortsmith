@@ -244,6 +244,19 @@ class Config:
     face_target_y: float = 0.40       # face center at 40% from top (eyes ~y=720)
     face_target_height: float = 0.32  # face bbox is ~32% of vertical (~615px)
 
+    # Cut-aware reframe (multicam / two-speaker footage). When on, reframe
+    # detects camera cuts and computes an independent face crop per shot instead
+    # of one static crop for the whole clip — so a podcast that hard-cuts between
+    # the host's and guest's cameras frames whoever is actually on screen.
+    # Off by default: single-speaker output is unchanged. Override per run with
+    # --cut-aware / SHORTSMITH_REFRAME_CUTAWARE, or per clip via clips.json
+    # "multicam": true.
+    reframe_cut_aware: bool = (os.environ.get("SHORTSMITH_REFRAME_CUTAWARE", "off").lower()
+                               in ("1", "true", "on", "yes"))
+    reframe_scene_threshold: float = float(
+        os.environ.get("SHORTSMITH_SCENE_THRESHOLD", "0.30"))  # ffmpeg scene score for a cut
+    reframe_min_shot_seconds: float = 0.4   # merge shorter shots into the previous one
+
     # Scaffold
     enable_captions: bool = False  # karaoke captions inclusion in index.html
     enable_callouts: bool = True   # big-text scene overlays at key moments

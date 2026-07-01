@@ -95,9 +95,13 @@ def transcribe_only(video: Path) -> None:
               help="Visual style preset (templates/styles/<name>/). Built-in: xrp-revolution, minimal, bold. Default: xrp-revolution.")
 @click.option("--clip-engine", type=click.Choice(["anthropic", "ollama"]), default=None,
               help="Clip-selection backend. anthropic=Claude API (best, costs ~$0.10-$2/video). ollama=local LLM (free, experimental, lower quality).")
+@click.option("--cut-aware/--no-cut-aware", default=None,
+              help="Reframe multicam/two-speaker footage by detecting camera cuts and "
+                   "framing each shot's speaker independently. Default off (single static "
+                   "crop). Per-clip clips.json \"multicam\": true overrides this.")
 def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         engine: str | None, min_score: int | None, style: str | None,
-        clip_engine: str | None) -> None:
+        clip_engine: str | None, cut_aware: bool | None) -> None:
     """Run the full pipeline on a single source video."""
     _setup_logging()
 
@@ -114,6 +118,8 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         cfg.style = style
     if clip_engine:
         cfg.clip_engine = clip_engine
+    if cut_aware is not None:
+        cfg.reframe_cut_aware = cut_aware
 
     problems = cfg.validate()
     # Filter problems by what the upcoming steps actually need.

@@ -146,11 +146,54 @@ uv run shortsmith run path/to/video.mp4 --clip-engine ollama
 # Different visual style
 uv run shortsmith run path/to/video.mp4 --style minimal
 
+# Multicam / two-speaker source (podcast cut between two cameras)
+uv run shortsmith run path/to/video.mp4 --cut-aware
+
 # Re-process every existing work dir with the latest pipeline
 uv run python scripts/reprocess_all.py
+
+# Finalize (Remotion captions + SFX + consolidate) for specific sources only
+uv run python scripts/finalize_slugs.py <source-slug> [<source-slug> ...]
 ```
 
 For batch operations across many source videos, see [`scripts/batch_pipeline.py`](scripts/batch_pipeline.py) and [`scripts/reprocess_all.py`](scripts/reprocess_all.py).
+
+## Multicam / two-speaker sources
+
+The default reframe computes ONE static 9:16 crop per clip from the speaker's
+median face position — perfect for a single talking head, wrong for a podcast
+that hard-cuts between two cameras (the crop would average both speakers'
+positions and frame neither).
+
+`--cut-aware` (or `SHORTSMITH_REFRAME_CUTAWARE=on`, or per-clip
+`"multicam": true` in `clips.json`) switches reframe to cut-aware mode:
+
+1. detect the camera cuts with ffmpeg scene detection
+   (`SHORTSMITH_SCENE_THRESHOLD`, default 0.30),
+2. compute an independent face crop for each shot with the same robust
+   median/IQR logic as the static path,
+3. stitch the shots with one `filter_complex` — video segmented per shot, audio
+   left as a single untouched stream, so A/V never drifts.
+
+No diarization needed: the edit already did the speaker-switching; reframe just
+follows whoever is on screen in each shot. Clips with no detected cuts fall
+back to the static crop automatically, so mixed batches are fine.
+
+Related per-clip flag: `"captions": false` in `clips.json` makes the finalize
+pass skip shortsmith's caption layer for that clip — use it when the source has
+its own burned-in captions (common on podcast exports).
+
+## Pre-made shorts (already cut + cropped)
+
+If a clip is already a finished 1080x1920 short, skip find/cut/clean/reframe
+and run only the finishing layer (hook card + captions + callouts + SFX):
+
+```bash
+uv run python scripts/ingest_premade.py <slug> file1.mp4 file2.mp4 ...
+# author work/<slug>/clips.json (hook/callouts/caption per rank), then scaffold,
+# base-render, and:
+uv run python scripts/finalize_slugs.py <slug>
+```
 
 ## Visual style presets
 
@@ -170,7 +213,7 @@ A curated, level-normalized pack lives at [`assets/sfx/pack/`](assets/sfx/) with
 
 ## What this is NOT (yet)
 
-- Multi-speaker / diarized — single talking-head only. Multi-speaker is on the v0.6 roadmap.
+- Diarized — there's no voice-based speaker ID. Multicam two-speaker edits ARE supported via `--cut-aware` (see above), which follows camera cuts rather than voices; footage with two speakers inside ONE static wide shot still gets a single crop.
 - A hosted service — local CLI tool. Bring your own GPU.
 - Without an LLM — clip selection needs Claude API or a local Ollama-compatible model. Or hand-write `clips.json` and `--from-step 3`.
 

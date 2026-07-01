@@ -50,6 +50,15 @@ def apply_remotion(project_dir: Path, *, style: str = "xrp-revolution",
 
     has_words = (project_dir / "assets" / "words.json").exists()
 
+    # Per-clip caption opt-out: a clip with "captions": false in _clips.json
+    # keeps the source's own (e.g. burned-in) captions and skips shortsmith's
+    # caption layer. Anything else defaults to captions on.
+    clip = render_remotion._clip_for(project_dir)
+    if clip is not None and clip.get("captions") is False:
+        if captions:
+            print(f"  {project_dir.name}: captions off (clip opted out — keeping source captions)")
+        captions = False
+
     # (Re)generate the heuristic b-roll. Best-effort: a failure here shouldn't
     # block the captioned render, which still adds value on its own.
     if broll and has_words:
