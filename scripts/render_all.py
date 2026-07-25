@@ -23,6 +23,14 @@ log = logging.getLogger("render")
 
 def render_project(project_dir: Path) -> bool:
     """Invoke `npx hyperframes render <project>` via cmd.exe."""
+    # Guard: only real, scaffolded project directories are renderable. A glob
+    # like `src.glob("short-*")` also matches the `short-NN-slug.txt` caption
+    # sidecars scaffold writes next to each project; handing those to
+    # `hyperframes render` fails with "Not a directory". Skip anything that
+    # isn't a directory containing an index.html.
+    if not project_dir.is_dir() or not (project_dir / "index.html").exists():
+        log.warning("skip %s: not a scaffolded project directory", project_dir.name)
+        return False
     # Use a single command string + shell=True so the Windows shell finds npx.
     # Quote the project path for safety.
     rel = project_dir.relative_to(KIT_ROOT)

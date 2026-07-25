@@ -114,8 +114,14 @@ def _disk_guard(min_warn_gb: float = 20.0, min_abort_gb: float = 5.0) -> None:
         log.info("Disk OK: %.1f GB free on the renders drive.", free_gb)
 
 
-def phase0_remotion(style: str, force: bool = False) -> int:
-    """Layer Remotion captions + auto b-roll onto every scaffolded short."""
+def phase0_remotion(style: str, force: bool = False,
+                    slugs: set[str] | None = None) -> int:
+    """Layer Remotion captions + auto b-roll onto every scaffolded short.
+
+    When `slugs` is given, only source folders whose name is in the set are
+    processed — so a partial/interrupted global run can be finished (or a single
+    batch re-rendered) without re-touching the whole library.
+    """
     sys.path.insert(0, str(SHORTSMITH_ROOT / "scripts"))
     try:
         import apply_remotion as ar
@@ -126,6 +132,8 @@ def phase0_remotion(style: str, force: bool = False) -> int:
     applied = skipped = 0
     for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
         if not src_dir.is_dir():
+            continue
+        if slugs is not None and src_dir.name not in slugs:
             continue
         for proj in sorted(src_dir.glob("short-*")):
             if not proj.is_dir():
@@ -146,10 +154,12 @@ def phase0_remotion(style: str, force: bool = False) -> int:
     return applied
 
 
-def phase1_sfx(cfg: Config, sfx_map) -> int:
+def phase1_sfx(cfg: Config, sfx_map, slugs: set[str] | None = None) -> int:
     applied = skipped = 0
     for wd in sorted(WORK_ROOT.iterdir()):
         if not wd.is_dir():
+            continue
+        if slugs is not None and wd.name not in slugs:
             continue
         cp, cm = wd / "clips.json", wd / "cut_manifests.json"
         if not (cp.exists() and cm.exists()):
@@ -207,11 +217,13 @@ def _qa_streams(p: Path) -> tuple[bool, int, int]:
         return False, 0, 0
 
 
-def phase2_consolidate() -> int:
+def phase2_consolidate(slugs: set[str] | None = None) -> int:
     ALL_DIR.mkdir(parents=True, exist_ok=True)
     copied = bad = 0
     for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
         if not src_dir.is_dir():
+            continue
+        if slugs is not None and src_dir.name not in slugs:
             continue
         for proj in sorted(src_dir.glob("short-*")):
             if not proj.is_dir():
@@ -262,7 +274,16 @@ def main() -> int:
              "up to date. Use after changing Remotion/caption code without re-rendering "
              "the Hyperframes base (the bundle cache is always cleared regardless).",
     )
+    ap.add_argument(
+        "--slug", action="append", metavar="SOURCE_SLUG", default=None,
+        help="Scope this finalize to one source-slug folder under auto-shorts/ "
+             "(repeatable). Use to finish a partial/interrupted run or re-finalize a "
+             "single batch without re-touching the whole library. Omit for all.",
+    )
     args = ap.parse_args()
+    slugs = set(args.slug) if args.slug else None
+    if slugs:
+        log.info("Scoped finalize to slugs: %s", ", ".join(sorted(slugs)))
 
     _disk_guard()
 
@@ -283,14 +304,14 @@ def main() -> int:
     if args.skip_remotion:
         log.info("Phase 0 skipped (--skip-remotion). SFX/consolidate will use Hyperframes base renders.")
     else:
-        phase0_remotion(style, force=args.force_remotion)
+        phase0_remotion(style, force=args.force_remotion, slugs=slugs)
 
     if args.skip_sfx:
         log.info("Phase 1 skipped (--skip-sfx). Going straight to consolidation.")
     else:
-        phase1_sfx(cfg, sfx_map)
+        phase1_sfx(cfg, sfx_map, slugs=slugs)
 
-    n = phase2_consolidate()
+    n = phase2_consolidate(slugs=slugs)
     log.info("FINALIZE COMPLETE. %d shorts consolidated to %s", n, ALL_DIR)
     return 0
 

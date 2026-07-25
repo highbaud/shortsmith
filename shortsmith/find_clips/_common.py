@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from slugify import slugify
@@ -19,6 +20,99 @@ PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "find_
 
 def load_system_prompt() -> str:
     return PROMPT_PATH.read_text(encoding="utf-8")
+
+
+_SHORT_SLUG_RE = re.compile(r"__short-\d+-(.+)$")
+
+
+def covered_topics_block(limit: int = 40) -> str:
+    """Build an ALREADY-COVERED TOPICS block from the scheduled ledger.
+
+    Reads `scheduled_ledger.json` at the repo root (written by the scheduling
+    tooling), pulls the topic slug out of each scheduled project key
+    (`<source>__short-NN-<topic-slug>`), dedupes to the most recent `limit`
+    distinct topics, and formats them as readable phrases. Returns "" when the
+    ledger is absent or empty, so callers can append unconditionally.
+    """
+    from ..config import REPO_ROOT
+
+    ledger_path = REPO_ROOT / "scheduled_ledger.json"
+    if not ledger_path.exists():
+        return ""
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+
+    # (date, topic_phrase) across every brand map in the ledger.
+    seen: dict[str, str] = {}  # topic_phrase -> most-recent date
+    for brand_map in ledger.values():
+        if not isinstance(brand_map, dict):
+            continue
+        for key, entries in brand_map.items():
+            m = _SHORT_SLUG_RE.search(str(key))
+            if not m:
+                continue
+            topic = m.group(1).replace("-", " ").strip()
+            if not topic:
+                continue
+            date = ""
+            if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+                date = str(entries[0].get("date", ""))
+            if topic not in seen or date > seen[topic]:
+                seen[topic] = date
+
+    if not seen:
+        return ""
+    # Most recent first, capped.
+    topics = sorted(seen.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    lines = "\n".join(f"- {t}" for t, _ in topics)
+    return (
+        "\n\nALREADY-COVERED TOPICS (recently published; avoid near-duplicates "
+        "unless the take is materially different):\n" + lines
+    )
+
+
+def performance_block(limit: int = 12) -> str:
+    """Inject real post-performance calibration into the clip-finding prompt.
+
+    Reads `calibration/top_topics.json` + `calibration/weak_topics.json` (written
+    by scripts/calibrate.py from Metricool analytics) and formats them as a
+    steer: which past angles actually performed vs. which fell flat. Returns ""
+    when no calibration exists, so this is a no-op until the feedback loop is
+    seeded. This is the mechanism that turns viral_score from taste into the
+    audience's revealed preference.
+    """
+    from ..config import REPO_ROOT
+
+    cal = REPO_ROOT / "calibration"
+
+    def _load(name: str) -> list[str]:
+        p = cal / name
+        if not p.exists():
+            return []
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return []
+        return [str(x) for x in data][:limit] if isinstance(data, list) else []
+
+    top = _load("top_topics.json")
+    weak = _load("weak_topics.json")
+    if not top and not weak:
+        return ""
+
+    parts = ["\n\nPERFORMANCE CALIBRATION (from real published-post analytics — "
+             "use as a tie-breaker, not a hard filter):"]
+    if top:
+        parts.append("TOP-PERFORMING past angles (this audience rewards these — "
+                     "lean toward clips in this territory):")
+        parts.append("\n".join(f"- {t}" for t in top))
+    if weak:
+        parts.append("UNDERPERFORMING past angles (these fell flat — only include "
+                     "a similar clip if it is clearly stronger):")
+        parts.append("\n".join(f"- {t}" for t in weak))
+    return "\n".join(parts)
 
 
 def format_transcript(words: list[dict]) -> str:
@@ -65,17 +159,28 @@ def parse_json_response(raw: str) -> list[dict]:
     return json.loads(raw[start : end + 1])
 
 
+_VALID_CALLOUT_STYLES = {"caption", "punch", "bigstat", "hero"}
+
+
 def _normalize_callouts(raw: list) -> list[dict]:
     out: list[dict] = []
     for c in raw or []:
         try:
+            style = str(c.get("style", "caption")).strip().lower()
+            if style not in _VALID_CALLOUT_STYLES:
+                style = "caption"
             out.append({
                 "local_start": float(c["local_start"]),
                 "duration": float(c.get("duration", 1.6)),
                 "text": str(c["text"]).strip(),
+                # style + subline are what make bigstat/punch/hero render as
+                # intended. Dropping them (the old behaviour) silently collapsed
+                # every API-picked callout into a plain lower-third caption.
+                "style": style,
+                "subline": str(c.get("subline", "")).strip(),
                 "accent": list(c.get("accent") or []),
                 "eyebrow": str(c.get("eyebrow", "")).strip(),
-                "color": str(c.get("color", "cyan")).strip().lower(),
+                "color": str(c.get("color", "gold")).strip().lower(),
             })
         except (KeyError, ValueError, TypeError):
             continue

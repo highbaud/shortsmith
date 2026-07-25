@@ -92,6 +92,11 @@ class Config:
     # Anthropic
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
     claude_model: str = os.environ.get("SHORTSMITH_CLAUDE_MODEL", "claude-opus-4-7")
+    # Output token budget for clip finding. A long stream can return 15-20 clips
+    # each with a hook + callouts + a ~500-char caption, which blows past 8k and
+    # truncates the JSON (trailing clips vanish or the whole parse fails). 32k
+    # comfortably fits the largest realistic pick list on Opus 4.x.
+    clip_max_tokens: int = int(os.environ.get("SHORTSMITH_CLIP_MAX_TOKENS", "32000"))
 
     # Local LLM (Ollama / LM Studio / vLLM — any OpenAI-compatible endpoint)
     local_llm_url: str = os.environ.get("SHORTSMITH_LOCAL_LLM_URL", "http://localhost:11434/v1")
@@ -225,6 +230,17 @@ class Config:
     # "voicefixer" = fallback (works out-of-the-box, lower quality).
     # "resemble" / "deepfilter" = legacy options, harder Windows install.
     enhance_engine: str = os.environ.get("SHORTSMITH_ENHANCE", "clearvoice")
+
+    # Ambient punch-in interrupts (Remotion layer). A subtle ~1.0->1.045 scale
+    # pulse on the base video during long talking-head stretches with no overlay,
+    # b-roll, or VFX active — the cheapest retention lever (a visual change every
+    # ~8-12s). Planned in the free gaps so it never collides with a hook/callout.
+    # Disable with SHORTSMITH_PUNCH=off.
+    punch_interrupt_enabled: bool = (os.environ.get("SHORTSMITH_PUNCH", "on").lower()
+                                     not in ("off", "0", "false", "no"))
+    punch_interrupt_every: float = float(os.environ.get("SHORTSMITH_PUNCH_EVERY", "10.0"))
+    punch_interrupt_min_gap: float = 6.0   # only place punches in dead gaps at least this long
+    punch_interrupt_edge_margin: float = 1.5  # keep this clear of each gap's edges
 
     # Reframe
     yunet_model_path: Path = Path(__file__).parent.parent / "models" / "face_detection_yunet_2023mar.onnx"

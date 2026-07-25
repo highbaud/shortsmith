@@ -172,6 +172,29 @@ const Captions: React.FC<{
   );
 };
 
+/** Gentle ambient punch-in scale (1.0..~1.045) at the current time, given the
+ *  planned punch start times. Each punch eases up to its peak in ~0.28s then
+ *  back to rest by ~0.9s. Overlapping punches take the max. Pure — testable and
+ *  frame-driven via the `t` the caller passes from useCurrentFrame(). */
+function ambientPunchScale(t: number, punches: number[], peak = 1.045): number {
+  let scale = 1;
+  for (const p of punches) {
+    if (t < p || t > p + 0.9) continue;
+    const local =
+      t <= p + 0.28
+        ? interpolate(t, [p, p + 0.28], [1, peak], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          })
+        : interpolate(t, [p + 0.28, p + 0.9], [peak, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+    scale = Math.max(scale, local);
+  }
+  return scale;
+}
+
 /** Inner component so the useCurrentFrame() inside useZoomPunchScale runs in a
  *  context that's already inside the Composition. Keeps the parent Short
  *  unchanged for callers that pass no vfxEvents. */
@@ -188,7 +211,9 @@ const ShortInner: React.FC<ShortProps> = (props) => {
     broll,
     palette,
     vfxEvents = [],
+    ambientPunches = [],
   } = props;
+  const frame = useCurrentFrame();
   // Captions yield during full-frame b-roll cutaways (a slide that covers the
   // frame would otherwise have karaoke text on top of it). Logo *badges* are a
   // small upper-area overlay that leaves the base video and captions visible,
@@ -213,11 +238,14 @@ const ShortInner: React.FC<ShortProps> = (props) => {
   // Zoom-punch scales the base video container. Multiple overlapping punches
   // take the max (not the sum) so stacked hooks don't compound.
   const zoomScale = useZoomPunchScale(vfxEvents);
+  // Ambient punch-ins reset attention in dead talking-head stretches. Composed
+  // multiplicatively with the semantic zoom-punch; both rest at 1.0.
+  const ambientScale = ambientPunchScale(frame / props.fps, ambientPunches);
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
       <AbsoluteFill style={{
-        transform: `scale(${zoomScale})`,
+        transform: `scale(${zoomScale * ambientScale})`,
         transformOrigin: "center 40%",  // anchor at face zone (face_target_y=0.40)
       }}>
         <OffthreadVideo src={staticFile(baseVideo)} />

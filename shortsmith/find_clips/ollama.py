@@ -25,7 +25,13 @@ import urllib.error
 import urllib.request
 
 from ..config import Config
-from ._common import format_transcript, load_system_prompt, parse_json_response
+from ._common import (
+    covered_topics_block,
+    format_transcript,
+    load_system_prompt,
+    parse_json_response,
+    performance_block,
+)
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +49,9 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
     )
     log.info("ollama: calling %s with model=%s", base_url, model)
 
-    transcript_text = format_transcript(words)
+    transcript_text = (
+        format_transcript(words) + covered_topics_block() + performance_block()
+    )
     system_prompt = load_system_prompt()
 
     # Append a JSON-only reinforcement — local models often add prose otherwise.
@@ -57,7 +65,8 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
     for attempt in range(1, DEFAULT_MAX_RETRIES + 1):
         try:
             raw = _post_chat(base_url, model, system_prompt, user_msg,
-                             temperature=cfg.local_llm_temperature)
+                             temperature=cfg.local_llm_temperature,
+                             max_tokens=getattr(cfg, "clip_max_tokens", 32000))
             return parse_json_response(raw)
         except (json.JSONDecodeError, ValueError) as e:
             log.warning("ollama: bad JSON on attempt %d/%d: %s",
@@ -81,7 +90,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
 
 
 def _post_chat(base_url: str, model: str, system: str, user: str,
-               temperature: float) -> str:
+               temperature: float, max_tokens: int = 32000) -> str:
     """Minimal OpenAI-compatible chat completion using stdlib urllib."""
     body = json.dumps({
         "model": model,
@@ -90,6 +99,7 @@ def _post_chat(base_url: str, model: str, system: str, user: str,
             {"role": "user", "content": user},
         ],
         "temperature": temperature,
+        "max_tokens": max_tokens,
         "stream": False,
     }).encode("utf-8")
 

@@ -428,6 +428,57 @@ def _vfx_events(short_dir: Path, words: list[dict],
     return [e.to_props() for e in plan_vfx_events(clip, words, cfg, clip_duration)]
 
 
+def _ambient_punches(busy: list[dict], duration: float) -> list[float]:
+    """Plan gentle ambient punch-in times in the dead gaps between activity.
+
+    `busy` is every interval where something is already moving (Hyperframes
+    overlays, b-roll cutaways, VFX events). We invert it to free gaps and drop a
+    punch every ~`every` seconds inside gaps long enough to warrant one, keeping
+    a margin from each gap edge so a punch never lands on an overlay entrance.
+    Config-gated + fail-open (any import/plan hiccup returns no punches).
+    """
+    try:
+        from shortsmith.config import Config
+        cfg = Config()
+    except Exception:  # noqa: BLE001 - standalone use without the package
+        return []
+    if not getattr(cfg, "punch_interrupt_enabled", True) or duration <= 0:
+        return []
+
+    every = max(4.0, float(getattr(cfg, "punch_interrupt_every", 10.0)))
+    min_gap = float(getattr(cfg, "punch_interrupt_min_gap", 6.0))
+    margin = float(getattr(cfg, "punch_interrupt_edge_margin", 1.5))
+
+    # Merge busy intervals.
+    ivs = sorted(
+        ((max(0.0, float(b["start"])), min(duration, float(b["end"])))
+         for b in busy if b.get("end", 0) > b.get("start", 0)),
+        key=lambda p: p[0],
+    )
+    merged: list[list[float]] = []
+    for a, b in ivs:
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+
+    # Free gaps = complement of merged busy over [0, duration].
+    punches: list[float] = []
+    cursor = 0.0
+    for a, b in merged + [[duration, duration]]:
+        gap_start, gap_end = cursor, a
+        cursor = max(cursor, b)
+        if gap_end - gap_start < min_gap:
+            continue
+        # First punch ~one interval in, then every `every` seconds, staying a
+        # margin clear of both edges.
+        t = gap_start + max(margin, every * 0.6)
+        while t <= gap_end - margin:
+            punches.append(round(t, 2))
+            t += every
+    return punches
+
+
 def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
            broll_arg: str | None, output: str, style: str, open_after: bool) -> Path:
     short_dir = short_dir.resolve()
@@ -460,6 +511,15 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
 
     vfx_events = _vfx_events(short_dir, words, duration)
 
+    # Ambient punch-ins go in the dead gaps between every other kind of motion.
+    busy = (
+        [{"start": w["start"], "end": w["end"]} for w in overlays]
+        + [{"start": float(s["start"]), "end": float(s["end"])} for s in broll]
+        + [{"start": e["t"], "end": e["t"] + e.get("durationMs", 0) / 1000.0}
+           for e in vfx_events]
+    )
+    ambient_punches = _ambient_punches(busy, duration)
+
     props = {
         "baseVideo": base_rel,
         "durationInSeconds": duration,
@@ -473,6 +533,7 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
         "broll": broll,
         "palette": palette,
         "vfxEvents": vfx_events,
+        "ambientPunches": ambient_punches,
     }
 
     out_path = short_dir / "renders" / output
@@ -485,7 +546,8 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
     print(f"Rendering {short_dir.name} -> {out_path.name}")
     print(f"  base={base_rel} ({duration:.1f}s)  captions={'on' if captions else 'off'} "
           f"({platform})  overlays={len(overlays)}  broll={len(broll)}  palette={style}  "
-          f"band=[{band['top']:.2f},{band['bottom']:.2f}]  vfx={len(vfx_events)}")
+          f"band=[{band['top']:.2f},{band['bottom']:.2f}]  vfx={len(vfx_events)}  "
+          f"punches={len(ambient_punches)}")
 
     npx = "npx.cmd" if sys.platform == "win32" else "npx"
     cmd = [

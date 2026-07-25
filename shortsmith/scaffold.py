@@ -263,6 +263,11 @@ def _fallback_caption(clip: dict) -> str:
     )
 
 
+# Max visible characters for a `bigstat` callout before it overflows the 1080px
+# frame at the giant display size. Tuned against real overflows ("$800T-$4Q").
+BIGSTAT_MAX_CHARS = 9
+
+
 def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) -> list[dict]:
     """Build the per-clip callout list and the per-callout render kwargs.
 
@@ -307,6 +312,20 @@ def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) ->
         style = (co.get("style") or "caption").lower()
         if style not in VALID_STYLES:
             style = "caption"
+
+        # bigstat renders the main text as a full-width giant number. Past ~9
+        # visible characters it overflows both frame edges (e.g. the "$800T-$4Q"
+        # clip that clipped at both sides). Warn loudly so it's fixed in
+        # clips.json (shorten to the single figure that matters) before render.
+        if style == "bigstat":
+            visible = len(raw_text.replace(" ", "").replace("\n", ""))
+            if visible > BIGSTAT_MAX_CHARS:
+                log.warning(
+                    "Clip %d callout %d: bigstat text %r is %d chars (> %d) and "
+                    "will overflow the frame. Shorten it to the single figure "
+                    "that lands (e.g. \"$4Q\", not \"$800T-$4Q\").",
+                    rank, i, raw_text, visible, BIGSTAT_MAX_CHARS,
+                )
 
         color = (co.get("color") or "gold").lower()
         # Map legacy color names (orange/cyan) to the new palette

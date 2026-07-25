@@ -133,6 +133,12 @@ export type ShortProps = {
   /** Optional visual transitions (Capcut-style glare, zoom-punch, flash).
    *  Empty / omitted = no VFX layer rendered. */
   vfxEvents?: VFXEvent[];
+
+  /** Optional ambient punch-in times (seconds). Each fires a gentle ~1.0->1.045
+   *  scale pulse on the base video to reset attention during long talking-head
+   *  stretches with no other motion. Planned in the free gaps between overlays,
+   *  b-roll, and VFX so it never competes with a hook/callout. Empty = off. */
+  ambientPunches?: number[];
 };
 
 export const defaultShortProps: ShortProps = {
@@ -153,4 +159,5 @@ export const defaultShortProps: ShortProps = {
     bg: "#07121c",
   },
   vfxEvents: [],
+  ambientPunches: [],
 };

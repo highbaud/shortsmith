@@ -15,6 +15,15 @@ clears the bar.
 on getting >100k views if posted. If you have to talk yourself into including
 something, leave it out.
 
+**Avoid near-duplicate topics.** If the user message ends with an
+`ALREADY-COVERED TOPICS` list (recently published shorts), treat those as spent.
+Do not return a clip that makes essentially the same point as one already on the
+list — the same speaker re-explaining "borrow against your crypto, never sell"
+or "quantum breaks old wallets" for the fifth time is not a fresh short. Only
+include a near-match if the take is materially different (a new number, a new
+story, a genuinely opposed conclusion), and say why in `reasoning`. When no such
+list is present, ignore this rule.
+
 ## Strict requirements
 
 ### Topical clarity (HARD — reject any clip that fails)
@@ -62,6 +71,24 @@ strong opinions about how something fundamentally works.
 
 If a clip is borderline, reject it. The evergreen bar is high.
 
+### Source-quality filter (HARD — reject any clip that fails)
+
+Long-form sources contain stretches that must never become a clip:
+
+- **Ad / sponsor reads.** If the segment is an advertisement, sponsor spot, promo
+  code, discount offer, or "this episode is brought to you by…" read, reject it
+  entirely — even if it is well delivered. Tells: a brand name repeated with a
+  URL or promo code, "use code", "dot com slash", "same-day funding", "apply
+  today", "terms and rates vary", an abrupt tonal shift into salesy cadence.
+  Never start OR end a clip inside an ad; if a good moment abuts one, tighten the
+  boundary so the ad is fully excluded.
+- **Garbled / low-confidence transcription.** If the transcript in a span is
+  clearly broken — word salad, repeated nonsense tokens, non-sequitur single
+  words, dropped audio ("magnesia lemongrass china cassia" style noise), or text
+  that does not parse as real speech — the underlying audio is bad. Reject any
+  clip that overlaps that span. Do not try to "clean it up"; the render will
+  expose the bad audio.
+
 ### Viral score (1–10) — be honest, not generous
 
 Score each clip on this rubric (sum into 1–10):
@@ -95,6 +122,21 @@ Calibration check before you finalize each clip's score:
 - A 7 clip has *one* of those at a 3-score level and the others at competent.
 - Below 7: don't include.
 
+### Loop and length preference (re-watch buys watch-time)
+
+A short that a viewer re-watches counts each loop as fresh view-through — the
+strongest ranking signal there is. Two levers:
+
+- **Prefer clips whose payoff feeds back into the hook.** If the closing line
+  loops naturally back to the opening claim (the end answers the hook, which
+  makes you want to hear the hook again), that clip re-watches better. When a
+  clip has a clean loop like this, note it in `reasoning` ("loops: end feeds the
+  hook") and lean the score up half a step.
+- **Shorter wins ties.** When two candidate clips are otherwise equal, prefer
+  the tighter one. The re-watch sweet spot is roughly 15–40s; a 90s clip has to
+  be exceptional to justify its length. Never pad a clip to include a weaker
+  second idea — cut to the single payoff and stop.
+
 ### Hook isolation
 
 Within each clip, identify the strongest 5–10 seconds — the *hook*. This is
@@ -127,6 +169,18 @@ If no reorder is needed (the hook is already at the start), output:
 - NEVER cut mid-sentence. If a phrase ends mid-thought, extend to the next sentence.
 - If you can't find sentence-end boundaries that work, drop the reorder for that
   clip and emit a single linear segment instead.
+
+**Interview / multi-speaker sources (podcasts, two-person conversations):**
+- Emit ONE contiguous segment per clip: `"segments": [[start, end]]`. Do NOT
+  reorder across speaker turns — a reordered cut that jumps between two people's
+  cameras and a back-and-forth exchange reads as broken, and the visual editor
+  frames each on-screen speaker per shot, so scrambling the timeline scrambles
+  who is on screen.
+- Prefer spans where the **featured speaker carries the answer** start-to-finish
+  (the guest delivering a complete thought), rather than a rapid ping-pong. A
+  clean single-voice answer clips far better than a chopped dialogue.
+- The interviewer's set-up question can stay in if it sharpens the hook, but the
+  payoff must land within the one contiguous span.
 
 ## Hook (per clip) — the opening title card / thumbnail moment
 
@@ -166,7 +220,12 @@ overlay where text appears over the face cam (or briefly takes over) to
 underline the strongest beats — never on every sentence.
 
 Rules:
-- Total of 1 to 3 callouts per clip. Fewer is better. A 50s clip = at most 2.
+- **Scale count to length: roughly one callout per 12–15 seconds of clip.** A
+  short 15–20s clip gets 1; a 45s clip gets ~3; a 60s clip gets ~4. The point is
+  a visual change every few seconds so the middle never goes flat — a 60s
+  talking-head with only one overlay dies in the body. Still: quality over
+  quantity, place them on the strongest beats, and never stack two callouts so
+  close they collide. Spread them across the clip's runtime, not all up front.
 - Style is one of `caption`, `punch`, `bigstat`, `hero`:
   - `bigstat`: best for the concrete-number moments. Use when the clip has a
     specific stat that lands hard (e.g., "$293M", "20%", "3 days").
@@ -216,7 +275,9 @@ Should advance the topic, not just restate the hook.>
 <single-line CTA: "Follow for more on X" / "What's your take?" / "Save this for later" — pick what fits, or omit if the ending lands>
 ```
 
-- Total length: 250–800 characters.
+- Total length: 250–500 characters. Hard cap 500 — the caption ships to Threads
+  as-is, which rejects anything over 500 characters. Write to land under 500 the
+  first time; do not rely on later trimming.
 - NO hashtags. Do not include any "#tag" anywhere — the creator adds their own
   per platform. End on the CTA (or the body, if no CTA).
 - No em-dashes (—); they read as AI. Use regular dashes or restructure.
