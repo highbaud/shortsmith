@@ -266,7 +266,7 @@ def main() -> int:
     ap.add_argument(
         "--offline", action="store_true",
         help="Force Phase 0 (if not skipped) to use the on-disk b-roll fetch cache only; "
-             "no live HTTP to Commons / Openverse / Wikipedia.",
+             "no live HTTP to Wikidata / Commons / Simple Icons.",
     )
     ap.add_argument(
         "--force-remotion", action="store_true",

@@ -23,6 +23,7 @@ import click
 
 from .config import (
     AUDIO_ENHANCE_PROJECT,
+    HYPERFRAMES_SPEC,
     KIT_ROOT,
     REPO_ROOT,
     TEMPLATE_REF,
@@ -134,6 +135,14 @@ def doctor() -> int:
         _row(FAIL, f"kit not found at {KIT_ROOT}",
              "Run: git submodule update --init --recursive "
              "(or set SHORTSMITH_KIT_ROOT to an existing kit)")
+    # Renders go through a pinned CLI version so an upstream release can't
+    # silently change output mid-batch. config.hyperframes_cmd() is the gate.
+    if HYPERFRAMES_SPEC == "hyperframes":
+        _row(WARN, "Hyperframes CLI version is unpinned",
+             "SHORTSMITH_HYPERFRAMES_VERSION=latest, so renders may change between "
+             "batches. Unset it to return to the pin.")
+    else:
+        _row(OK, f"Hyperframes CLI pinned ({HYPERFRAMES_SPEC})")
     if TEMPLATE_REF.exists():
         _row(OK, "may-shorts-19 template reference present")
     else:

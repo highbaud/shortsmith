@@ -11,7 +11,7 @@ import sys
 import time
 from pathlib import Path
 
-from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT
+from shortsmith.config import AUTO_SHORTS_ROOT, HYPERFRAMES_SPEC, KIT_ROOT
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +34,7 @@ def render_project(project_dir: Path) -> bool:
     # Use a single command string + shell=True so the Windows shell finds npx.
     # Quote the project path for safety.
     rel = project_dir.relative_to(KIT_ROOT)
-    cmd_str = f'npx hyperframes render "{rel.as_posix()}"'
+    cmd_str = f'npx {HYPERFRAMES_SPEC} render "{rel.as_posix()}"'
     log.info("$ %s", cmd_str)
     proc = subprocess.run(
         cmd_str,

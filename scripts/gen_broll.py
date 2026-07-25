@@ -12,17 +12,18 @@ Two engines:
     crypto/tech brands & people -> logo/person slides.
 
 For `logo` and `person` slides it downloads the asset into `assets/broll/`:
-  * logo  -> Simple Icons (current official mark in the brand's own color),
-             falling back to a vectorlogo.zone full-color SVG. Both sit on a
+  * logo  -> a mark whose BRAND is verified, via `brand_logos.py`: a
+             title-checked Simple Icons mark, else the Wikidata entity's own
+             P154 logo, else (unverified, last) vectorlogo.zone. All sit on a
              white tile at render time so dark marks stay visible.
-  * person -> a Creative Commons photo, pooled across multiple sources so the
-             same person doesn't always get the identical image:
-               1. Wikimedia Commons search (on-target, several photos each)
-               2. Openverse (Flickr + other CC libraries)
-               3. Wikipedia REST lead image (reliable fallback)
-             Candidates are shuffled and the first that downloads wins. An
-             already-downloaded photo for a person is reused (stable within a
-             short; varies across shorts). Pass --photo-seed for reproducibility.
+  * person -> a Creative Commons photo whose subject is VERIFIED, via
+             `person_photos.py`: the name is resolved to a Wikidata human
+             entity first, and only images bound to that entity (P18 / Commons
+             "depicts" / the entity's own category) are eligible. If identity
+             can't be established the slide is dropped rather than guessed at.
+             Verified photos are cached repo-wide in `assets/people/` so a
+             person looks the same in every short; `--fresh-photo` re-picks and
+             `--photo-seed` makes the pick reproducible.
 
 Writes `<short>/broll.auto.json`. This is MERGED with any hand-authored
 `<short>/broll.json` at render time (manual wins on overlap), so editing the
@@ -35,6 +36,10 @@ Options:
     --heuristic        Force the no-API heuristic engine.
     --max N            Cap the number of slides (default 6).
     --dry-run          Print the proposed slides; don't download or write.
+    --fresh-photo      Ignore the repo-wide photo cache and re-pick.
+    --audit-people     Resolve every curated person to a Wikidata entity + photo
+                       and print the table. Takes no short folder.
+    --audit-brands     Same, for brand logos. Takes no short folder.
 """
 from __future__ import annotations
 
@@ -44,16 +49,19 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
 # Reuse the exact overlay-window derivation the renderer uses, so the free gaps
 # we author into match what Hyperframes actually rendered.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import brand_logos  # noqa: E402
+import person_photos  # noqa: E402
+import wikidata  # noqa: E402
 from render_remotion import _overlay_windows, _pick_base, _probe_duration  # noqa: E402
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "gen_broll.md"
@@ -66,9 +74,9 @@ UA = "shortsmith/0.5 (+https://github.com/highbaud/shortsmith)"
 # --- Network politeness ---
 # Cache successful fetches on disk so identical URLs never hit the network twice.
 _CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache" / "broll-fetch"
-# Minimum interval between outbound requests. Wikimedia / Openverse / Wikipedia
-# tolerate ~5 req/s easily but we stay polite at ~2 req/s with jitter so a
-# 1000-clip reprocess never trips a rate limit.
+# Minimum interval between outbound requests. Wikidata, Wikimedia Commons and
+# Simple Icons tolerate ~5 req/s easily but we stay polite at ~2 req/s with
+# jitter so a 1000-clip reprocess never trips a rate limit.
 _THROTTLE_SECONDS = 0.5
 _LAST_FETCH_AT = 0.0  # module-level monotonic clock of last network attempt
 
@@ -405,29 +413,18 @@ def _http_get(url: str, *, max_retries: int = 3) -> bytes | None:
 def _download_logo(brand: str, out_dir: Path) -> tuple[str, bool] | None:
     """Return (relative_src, monochrome) or None.
 
-    Prefers Simple Icons, which serves the CURRENT official mark in the brand's
-    own color (e.g. Coinbase #0052FF). vectorlogo.zone is a community-contributed
-    fallback and can be out of date (it served the retired Coinbase "C"). Both
-    are returned as full-color (monochrome=False); LogoCard sits them on a white
-    tile so even dark/brand-colored marks stay visible on the dark gradient.
+    Source order and the reasoning behind it live in `brand_logos`. Everything
+    is returned as full-color (monochrome=False); LogoCard sits the mark on a
+    white tile so even dark or brand-colored logos stay visible on the dark
+    gradient.
     """
-    slug = _slug(brand)
-    # 1) current official mark in brand color from Simple Icons
-    si = _http_get(f"https://cdn.simpleicons.org/{slug}")
-    if si and b"<svg" in si:
-        p = out_dir / f"logo-{slug}.svg"
-        p.write_bytes(si)
-        return (f"assets/broll/{p.name}", False)
-    # 2) full-color SVG fallback from vectorlogo.zone
-    fc = _http_get(f"https://www.vectorlogo.zone/logos/{slug}/{slug}-icon.svg")
-    if fc and b"<svg" in fc:
-        p = out_dir / f"logo-{slug}.svg"
-        p.write_bytes(fc)
-        return (f"assets/broll/{p.name}", False)
-    return None
-
-
-MIN_IMG_WIDTH = 600
+    result = brand_logos.resolve_logo(_http_get, brand)
+    if not result:
+        return None
+    path = out_dir / f"logo-{_slug(brand)}{result.ext}"
+    path.write_bytes(result.data)
+    print(f"    {brand} -> {result.source}: {result.detail}")
+    return (f"assets/broll/{path.name}", False)
 
 
 def _is_image(raw: bytes) -> bool:
@@ -438,108 +435,100 @@ def _is_image(raw: bytes) -> bool:
     )
 
 
-def _img_ext(url: str) -> str:
-    u = url.lower()
-    if ".png" in u:
-        return ".png"
-    if ".webp" in u:
-        return ".webp"
-    return ".jpg"
+# Verified person photos are cached repo-wide rather than per-short, so a person
+# looks the same in every short and one manual correction sticks everywhere.
+PEOPLE_DIR = Path(__file__).resolve().parent.parent / "assets" / "people"
+PEOPLE_MANIFEST = PEOPLE_DIR / "people.json"
 
 
-def _commons_candidates(name: str, limit: int = 8) -> list[str]:
-    """On-target CC photos from Wikimedia Commons file search (namespace 6)."""
-    q = urllib.parse.quote(name)
-    url = (
-        "https://commons.wikimedia.org/w/api.php?action=query&generator=search"
-        f"&gsrsearch={q}&gsrnamespace=6&gsrlimit={limit}"
-        "&prop=imageinfo&iiprop=url%7Csize&iiurlwidth=1280&format=json"
-    )
-    data = _http_get(url)
-    if not data:
-        return []
+def _read_manifest() -> dict[str, dict]:
+    if not PEOPLE_MANIFEST.exists():
+        return {}
     try:
-        pages = json.loads(data).get("query", {}).get("pages", {})
-    except (json.JSONDecodeError, AttributeError):
-        return []
-    out: list[str] = []
-    for p in pages.values():
-        ii = (p.get("imageinfo") or [{}])[0]
-        u = ii.get("thumburl") or ii.get("url")
-        w = ii.get("thumbwidth") or ii.get("width") or 0
-        if u and int(w or 0) >= MIN_IMG_WIDTH:
-            out.append(u)
-    return out
+        data = json.loads(PEOPLE_MANIFEST.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def _openverse_candidates(name: str, limit: int = 8) -> list[str]:
-    """Broader CC variety (Flickr + other libraries), permissive licenses only."""
-    q = urllib.parse.quote(name)
-    url = (
-        f"https://api.openverse.org/v1/images/?q={q}"
-        f"&license=cc0,pdm,by,by-sa&page_size={limit}&mature=false"
-    )
-    data = _http_get(url)
-    if not data:
-        return []
+def _record_manifest(name: str, entry: dict) -> None:
+    """Append one person to the audit trail. Best-effort; never fails a render."""
     try:
-        results = json.loads(data).get("results", [])
-    except (json.JSONDecodeError, AttributeError):
-        return []
-    out: list[str] = []
-    for r in results:
-        u = r.get("url")
-        w = r.get("width") or 0
-        if u and (not w or int(w) >= MIN_IMG_WIDTH):
-            out.append(u)
-    return out
+        manifest = _read_manifest()
+        manifest[name] = entry
+        PEOPLE_DIR.mkdir(parents=True, exist_ok=True)
+        PEOPLE_MANIFEST.write_text(
+            json.dumps(dict(sorted(manifest.items())), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
 
 
-def _wikipedia_image(name: str) -> str | None:
-    """Reliable single lead image — used as a last-resort fallback."""
-    title = urllib.parse.quote(name.replace(" ", "_"))
-    data = _http_get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}")
-    if not data:
-        return None
-    try:
-        j = json.loads(data)
-    except json.JSONDecodeError:
-        return None
-    return (j.get("originalimage") or {}).get("source") or (j.get("thumbnail") or {}).get("source")
+def _cached_person_photo(slug: str) -> Path | None:
+    hits = _cached_person_photos(slug)
+    return hits[0] if hits else None
 
 
-def _download_person(name: str, out_dir: Path, seed: int | None = None) -> str | None:
-    """Pool CC photos from several sources and download one. Reuses an already
-    downloaded photo for this person so a short stays stable; different shorts
-    get a different shuffle, so the same person isn't always the same image."""
-    existing = sorted(out_dir.glob(f"person-{_slug(name)}.*"))
-    if existing:
-        return f"assets/broll/{existing[0].name}"
+def _cached_person_photos(slug: str) -> list[Path]:
+    return sorted(PEOPLE_DIR.glob(f"{slug}.*")) if PEOPLE_DIR.exists() else []
 
-    # Shuffle each source independently and keep Commons (on-target) ahead of
-    # Openverse (broad keyword match, can drift to the wrong person). This gives
-    # run-to-run variety within the on-target set without risking a mismatch.
-    rng = random.Random(seed) if seed is not None else random.Random()
-    commons = _commons_candidates(name)
-    openverse = _openverse_candidates(name)
-    rng.shuffle(commons)
-    rng.shuffle(openverse)
-    pool = commons + openverse
-    wp = _wikipedia_image(name)
-    if wp:
-        pool.append(wp)  # deterministic fallback, always last
 
-    seen: set[str] = set()
-    for u in pool:
-        if u in seen:
-            continue
-        seen.add(u)
-        raw = _http_get(u)
-        if raw and len(raw) > 8000 and _is_image(raw):
-            p = out_dir / f"person-{_slug(name)}{_img_ext(u)}"
-            p.write_bytes(raw)
-            return f"assets/broll/{p.name}"
-    return None
+def _download_person(name: str, out_dir: Path, seed: int | None = None,
+                     role_hint: str = "", fresh: bool = False) -> str | None:
+    """Return a short-relative path to a photo VERIFIED to be of `name`, or None.
+
+    Identity is resolved through Wikidata before any image is considered (see
+    person_photos), so a name that can't be pinned to a human (or a human with
+    no free portrait) yields None and the caller drops the slide. Guessing is
+    worse than saying nothing: a stranger's face under a real name is a
+    credibility problem the viewer notices and we don't.
+    """
+    slug = _slug(name)
+    cached = None if fresh else _cached_person_photo(slug)
+    if cached is None:
+        identity, candidates = person_photos.resolve_photo_candidates(
+            _http_get, name, role_hint, seed
+        )
+        if not identity:
+            print(f"    no Wikidata person matches {name!r} (role hint: {role_hint!r})")
+            return None
+        if not candidates:
+            print(f"    {identity.summary()}: no verified free photo")
+            return None
+
+        for cand in candidates:
+            raw = _http_get(cand.url)
+            if raw and len(raw) > 8000 and _is_image(raw):
+                PEOPLE_DIR.mkdir(parents=True, exist_ok=True)
+                cached = PEOPLE_DIR / f"{slug}{wikidata.file_extension(cand.title)}"
+                # Clear any prior photo for this person first. A re-pick with a
+                # different extension would otherwise leave both files, and the
+                # cache lookup, which globs and takes the first, would keep
+                # serving the stale one, silently undoing --fresh-photo.
+                for stale in _cached_person_photos(slug):
+                    if stale != cached:
+                        stale.unlink(missing_ok=True)
+                cached.write_bytes(raw)
+                _record_manifest(name, {
+                    "qid": identity.qid,
+                    "label": identity.label,
+                    "description": identity.description,
+                    "commons_file": cand.title,
+                    "origin": cand.origin,
+                    "score": cand.score,
+                    "cached_as": cached.name,
+                })
+                print(f"    {identity.qid} {identity.label} -> {cand.title} ({cand.origin})")
+                break
+        else:
+            print(f"    {identity.summary()}: {len(candidates)} candidate(s), none downloadable")
+            return None
+
+    dest = out_dir / f"person-{slug}{cached.suffix}"
+    if dest.resolve() != cached.resolve():
+        shutil.copyfile(cached, dest)
+    return f"assets/broll/{dest.name}"
 
 
 # --------------------------------------------------------------------------- #
@@ -578,7 +567,8 @@ def _normalize(slides: list[dict], gaps: list[tuple[float, float]]) -> list[dict
 
 
 def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
-                    photo_seed: int | None = None) -> list[dict]:
+                    photo_seed: int | None = None,
+                    fresh_photo: bool = False) -> list[dict]:
     out_dir = short_dir / "assets" / "broll"
     if not dry_run:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -602,9 +592,10 @@ def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
                 s["src"] = f"(would fetch photo: {person})"
                 resolved.append(s)
                 continue
-            src = _download_person(person, out_dir, seed=photo_seed)
+            src = _download_person(person, out_dir, seed=photo_seed,
+                                   role_hint=s.get("role") or "", fresh=fresh_photo)
             if not src:
-                print(f"  ! photo not found for {person!r}; dropping slide")
+                print(f"  ! no verified photo for {person!r}; dropping slide")
                 continue
             s["src"] = src
             resolved.append(s)
@@ -616,8 +607,62 @@ def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
+def audit_people(names: list[str] | None = None) -> int:
+    """Print the resolved identity + chosen photo for every curated person.
+
+    This is the eyeball pass: one table showing exactly which human each name
+    resolves to and which file would be shown, so a wrong pin is visible before
+    it reaches a render. Returns the number of people with no usable photo.
+    """
+    roster = ([(n, "") for n in names] if names else
+              sorted({(name, role) for name, role in KNOWN_PEOPLE.values()}))
+    unusable = 0
+    for name, role in roster:
+        identity, candidates = person_photos.resolve_photo_candidates(_http_get, name, role)
+        if not identity:
+            print(f"\n{name}\n  UNRESOLVED: no Wikidata human matches (role hint: {role!r})")
+            unusable += 1
+            continue
+        pin = " [pinned]" if identity.pinned else " [searched]"
+        print(f"\n{name}{pin}\n  {identity.summary()}")
+        if not candidates:
+            print("  NO VERIFIED PHOTO: slides for this person will be dropped")
+            unusable += 1
+            continue
+        top = candidates[0]
+        print(f"  -> {top.title}  ({top.origin}, score {top.score}, {top.width}px)")
+        if top.reasons:
+            print(f"     {', '.join(top.reasons)}")
+        for alt in candidates[1:4]:
+            print(f"     alt [{alt.score}] {alt.origin}: {alt.title}")
+    print(f"\n{len(roster)} people, {unusable} with no usable photo.")
+    return unusable
+
+
+def audit_brands(brands: list[str] | None = None) -> int:
+    """Print which source answers for every curated brand. Returns the miss count."""
+    roster = brands or sorted(set(KNOWN_BRANDS.values()))
+    missing: list[str] = []
+    unverified: list[str] = []
+    for brand in roster:
+        result = brand_logos.resolve_logo(_http_get, brand)
+        if not result:
+            print(f"  {brand:<22} NO LOGO: slides for this brand will be dropped")
+            missing.append(brand)
+            continue
+        mark = "" if result.is_verified else "   (unverified source)"
+        print(f"  {brand:<22} {result.source:<14} {result.detail}{mark}")
+        if not result.is_verified:
+            unverified.append(brand)
+    print(f"\n{len(roster)} brands, {len(missing)} with no logo, "
+          f"{len(unverified)} from an unverified source.")
+    if missing:
+        print("  no logo: " + ", ".join(missing))
+    return len(missing)
+
+
 def generate(short_dir: Path, *, heuristic: bool, cap: int, dry_run: bool,
-             photo_seed: int | None = None) -> Path | None:
+             photo_seed: int | None = None, fresh_photo: bool = False) -> Path | None:
     short_dir = short_dir.resolve()
     words = _load_words(short_dir)
     duration = _duration(short_dir)
@@ -642,7 +687,8 @@ def generate(short_dir: Path, *, heuristic: bool, cap: int, dry_run: bool,
         raw = _gen_heuristic(words, gaps, cap)
 
     slides = _normalize(raw, gaps)[:cap]
-    slides = _resolve_assets(slides, short_dir, dry_run, photo_seed=photo_seed)
+    slides = _resolve_assets(slides, short_dir, dry_run, photo_seed=photo_seed,
+                             fresh_photo=fresh_photo)
 
     print(f"  -> {len(slides)} slide(s):")
     for s in slides:
@@ -661,12 +707,20 @@ def generate(short_dir: Path, *, heuristic: bool, cap: int, dry_run: bool,
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Generate auto b-roll slides for a short.")
-    ap.add_argument("short_dir", type=Path, help="Path to a short-NN-<slug> folder")
+    ap.add_argument("short_dir", type=Path, nargs="?", help="Path to a short-NN-<slug> folder")
     ap.add_argument("--heuristic", action="store_true", help="Force the no-API heuristic engine")
     ap.add_argument("--max", dest="cap", type=int, default=6, help="Max slides (default 6)")
     ap.add_argument("--dry-run", action="store_true", help="Print proposed slides; don't download/write")
     ap.add_argument("--photo-seed", type=int, default=None,
                     help="Seed the person-photo shuffle for reproducible picks (default: random variety)")
+    ap.add_argument("--fresh-photo", action="store_true",
+                    help="Ignore the repo-wide assets/people cache and re-pick every person photo")
+    ap.add_argument("--audit-people", nargs="*", metavar="NAME", default=None,
+                    help="Resolve curated people to Wikidata + photo and print the table, then exit. "
+                         "Pass names to audit only those.")
+    ap.add_argument("--audit-brands", nargs="*", metavar="BRAND", default=None,
+                    help="Resolve curated brands to a logo source and print the table, then exit. "
+                         "Pass brands to audit only those.")
     ap.add_argument("--offline", action="store_true",
                     help="Disable all network. Uses on-disk cache only; uncached URLs return nothing.")
     ap.add_argument("--no-cache", action="store_true",
@@ -676,8 +730,18 @@ def main() -> None:
         os.environ["SHORTSMITH_BROLL_OFFLINE"] = "1"
     if args.no_cache:
         os.environ["SHORTSMITH_BROLL_NOCACHE"] = "1"
+    if args.audit_people is not None:
+        # Informational report. A few people (Burry, McCaleb) legitimately have
+        # no free portrait, so "unusable > 0" is not a failure.
+        audit_people(args.audit_people)
+        return
+    if args.audit_brands is not None:
+        audit_brands(args.audit_brands)
+        return
+    if args.short_dir is None:
+        ap.error("short_dir is required (or use --audit-people)")
     generate(args.short_dir, heuristic=args.heuristic, cap=args.cap, dry_run=args.dry_run,
-             photo_seed=args.photo_seed)
+             photo_seed=args.photo_seed, fresh_photo=args.fresh_photo)
 
 
 if __name__ == "__main__":

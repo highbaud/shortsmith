@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT, VIDEO_DIR
+from shortsmith.config import AUTO_SHORTS_ROOT, HYPERFRAMES_SPEC, KIT_ROOT, VIDEO_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -94,7 +94,7 @@ def run_pipeline(video: Path) -> bool:
 
 def render_project(project_dir: Path) -> bool:
     rel = project_dir.relative_to(KIT_ROOT)
-    cmd_str = f'npx hyperframes render "{rel.as_posix()}"'
+    cmd_str = f'npx {HYPERFRAMES_SPEC} render "{rel.as_posix()}"'
     proc = subprocess.run(cmd_str, cwd=str(KIT_ROOT), shell=True, capture_output=True, text=True)
     if proc.returncode != 0:
         log.error("FAIL render %s exit=%d stderr=%s",

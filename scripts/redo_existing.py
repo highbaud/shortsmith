@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT, VIDEO_DIR
+from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT, VIDEO_DIR, hyperframes_cmd
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,16 +76,16 @@ def render_project(project_dir: Path) -> bool:
     """Run `npx hyperframes render` on a scaffolded project, output to its renders/."""
     if not project_dir.is_dir():
         return False
-    cmd = [
-        "npx", "hyperframes", "render", str(project_dir),
+    cmd = hyperframes_cmd(
+        "render", str(project_dir),
         "--output", str(project_dir / "renders" / "final.mp4"),
-    ]
+    )
     log.info("$ %s", " ".join(shlex.quote(c) for c in cmd))
     proc = subprocess.run(cmd, cwd=str(KIT_ROOT), capture_output=True, text=True)
     if proc.returncode != 0:
         log.warning("render exit=%d for %s; trying without --output", proc.returncode, project_dir.name)
         # Some hyperframes versions don't support --output; fall back.
-        cmd2 = ["npx", "hyperframes", "render", str(project_dir)]
+        cmd2 = hyperframes_cmd("render", str(project_dir))
         proc = subprocess.run(cmd2, cwd=str(KIT_ROOT), capture_output=True, text=True)
         if proc.returncode != 0:
             log.error("FAILED render for %s\nstderr=%s", project_dir.name, proc.stderr[-1000:])

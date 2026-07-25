@@ -4,6 +4,87 @@ All notable changes to this project will be documented in this file.
 
 ## [0.6.0] — Unreleased
 
+### Changed
+- **Remotion 4.0.468 → 4.0.499, and `<OffthreadVideo>` → `@remotion/media`.**
+  `@remotion/media` became stable and recommended in 4.0.491; its `<Video>` is
+  the successor to core's `<OffthreadVideo>` and skips the per-frame headless
+  screenshot round-trip. All `@remotion/*` packages are now pinned exactly (they
+  must move in lockstep) rather than floating on `4.0.*`. B-roll `<Img>` slides
+  premount 15 frames early so a photo is decoded before its cutaway starts
+  instead of popping in a frame late. Verified by rendering a still through the
+  real composition.
+- **Hyperframes CLI is pinned** to `0.7.71` via `config.HYPERFRAMES_SPEC` /
+  `config.hyperframes_cmd()`, and all four render call sites go through it.
+  Bare `npx hyperframes` resolved to whatever was latest at that moment, so an
+  upstream release could change every render with no diff and no warning, and
+  the renders are the product. `shortsmith doctor` reports the pin; set
+  `SHORTSMITH_HYPERFRAMES_VERSION=latest` to float off it deliberately.
+- Wikidata/Commons API plumbing shared by the b-roll resolvers now lives in
+  `scripts/wikidata.py`.
+
+### Fixed
+- **Logo b-roll slides were missing for 12 of 41 curated brands**, including
+  BlackRock and JPMorgan, two of the most-mentioned institutions in this
+  channel's content. Simple Icons covers 27 of the 41 and vectorlogo.zone
+  answered for only 2 more; the rest resolved to nothing and the slide was
+  dropped without comment.
+
+  New [`scripts/brand_logos.py`](scripts/brand_logos.py) adds a verified middle
+  tier (Wikidata's P154 "logo image") taking coverage to 34 of 41 with every
+  mark verified and vectorlogo.zone demoted to a last resort it no longer
+  reaches. Building it surfaced five wrong logos that the naive version would
+  have shipped, each now a named regression test:
+
+  * `Quant` resolved to the TV series **Quantico**, and `XDC` to Sony **XDCAM**.
+    Fixed by matching Wikidata labels on a word boundary.
+  * `Kraken` resolved to a **Colombian metal band** genuinely labelled "Kraken".
+    Fixed by requiring company properties (industry / HQ / legal form).
+  * `Microsoft` resolved to its **1980 wordmark**, because P154 statements run
+    chronologically and the code took claims[0]. Fixed by ordering on Wikidata
+    rank and demoting claims with an end-time qualifier.
+  * `Fidelity` resolved to **Fidelity International**, a different company from
+    the Fidelity Investments US financial content means. Fixed by pinning to
+    the right QID, which has no logo, so no slide.
+
+  Common-noun brands (`swift`, `circle`, `flare`, `quant`, `anchorage`, `xdc`)
+  now never resolve by search; only a pinned QID can supply them. Simple Icons
+  results are checked against the mark's own `<title>` so an upstream slug
+  reassignment can't serve another brand's icon. New:
+  `gen_broll.py --audit-brands`.
+- **Person b-roll slides showed the wrong person.** `gen_broll.py` picked photos
+  by keyword-searching Wikimedia Commons / Openverse / Wikipedia for the name,
+  shuffling the results, and downloading the first one that decoded. Nothing
+  ever checked that the image was of that person. Commons file search matches
+  any file whose *description* mentions the words, so "David Schwartz" returned
+  a photo of Anna Schwartz, and the Wikipedia fallback resolved to an American
+  composer. Because the pool was shuffled, *which* wrong person appeared changed
+  between runs.
+
+  Replaced with identity verification in the new
+  [`scripts/person_photos.py`](scripts/person_photos.py): the name (plus the
+  slide's `role` as a disambiguating hint) resolves to a **Wikidata human
+  entity** first, and only images bound to that entity are eligible: its
+  designated portrait (P18), Commons files whose structured data says they
+  *depict* it (P180), and members of its own Commons category (P373). Candidates
+  are ranked to prefer P18 and solo portraits, and reject signatures, graves,
+  plaques, logos and group shots. **If identity can't be established the slide is
+  dropped** rather than guessed at.
+
+  29 curated people are pinned to verified QIDs, which matters more than it
+  sounds: unpinned, "Michael Saylor" resolves to a substitute teacher in
+  Kentucky (exact label match) and "Jim Rickards" resolves to nothing (his item
+  is "James G. Rickards"). Four people (Michael Burry, David Schwartz, Jed
+  McCaleb, Satoshi Nakamoto) have no free portrait at all and now correctly
+  produce no slide.
+
+  Verified photos are cached repo-wide in `assets/people/` instead of per-short,
+  so a person looks the same in every short; `assets/people/people.json` records
+  name → QID → Commons file as an audit trail. New:
+  `gen_broll.py --audit-people` prints the resolved identity and chosen photo
+  for every curated person, `--fresh-photo` bypasses the cache, and
+  `PERSON_PHOTO_OVERRIDES` forces a specific file. Openverse is no longer used
+  for people (broad keyword match, drifts to the wrong subject).
+
 ### Added
 - **Token-paste guardrail (pre-commit hooks).** `setup.sh` / `setup.ps1` now
   install `pre-commit` + Yelp's `detect-secrets` + a custom

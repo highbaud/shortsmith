@@ -1,0 +1,20 @@
+{
+  "Cathie Wood": {
+    "qid": "Q104587868",
+    "label": "Cathie Wood",
+    "description": "American investor and businesswoman; CEO of Ark Invest",
+    "commons_file": "Cathie Wood ARK Invest Photo.jpg",
+    "origin": "P18",
+    "score": 42,
+    "cached_as": "cathiewood.jpg"
+  },
+  "Michael Saylor": {
+    "qid": "Q6831501",
+    "label": "Michael J. Saylor",
+    "description": "American business executive, entrepreneur, and philanthropist (born 1965)",
+    "commons_file": "Michael Saylor 2022.png",
+    "origin": "P18",
+    "score": 42,
+    "cached_as": "michaelsaylor.png"
+  }
+}

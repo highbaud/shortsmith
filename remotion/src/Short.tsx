@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   AbsoluteFill,
-  OffthreadVideo,
   Sequence,
   staticFile,
   useCurrentFrame,
@@ -10,6 +9,10 @@ import {
   delayRender,
   continueRender,
 } from "remotion";
+// @remotion/media's <Video> supersedes core's <OffthreadVideo> as of 4.0.491 and
+// is the recommended tag for new work. Same frame-accurate extraction, without
+// the per-frame headless-Chrome screenshot round-trip OffthreadVideo relies on.
+import { Video } from "@remotion/media";
 import { loadFont } from "@remotion/google-fonts/Anton";
 import { BRoll } from "./BRoll";
 import { Flash, Glare, useZoomPunchScale } from "./VFX";
@@ -248,7 +251,7 @@ const ShortInner: React.FC<ShortProps> = (props) => {
         transform: `scale(${zoomScale * ambientScale})`,
         transformOrigin: "center 40%",  // anchor at face zone (face_target_y=0.40)
       }}>
-        <OffthreadVideo src={staticFile(baseVideo)} />
+        <Video src={staticFile(baseVideo)} />
       </AbsoluteFill>
 
       {captionsEnabled ? (

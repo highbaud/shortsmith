@@ -8,6 +8,7 @@ you clone the repo as-is from GitHub.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -62,6 +63,24 @@ AUDIO_ENHANCE_PROJECT = _resolve_path("SHORTSMITH_AUDIO_ENHANCE",   "audio-enhan
 WHISPERX_ALIGN_PROJECT = _resolve_path("SHORTSMITH_WHISPERX_ALIGN", "whisperx-align")
 VIDEO_DIR             = _resolve_path("SHORTSMITH_VIDEO_DIR",       "videos")
 SFX_DIR               = _resolve_path("SHORTSMITH_SFX_DIR",        "assets/sfx")
+
+# --- Hyperframes CLI pin --------------------------------------------------- #
+# Bare `npx hyperframes` resolves to whatever is latest at the moment it runs,
+# so an upstream release can change every render with no diff and no warning.
+# The renders ARE the product, so the version is pinned here and every render
+# call site goes through hyperframes_cmd(). Bump deliberately, then re-render a
+# known short and compare before trusting a batch to it.
+HYPERFRAMES_VERSION = os.environ.get("SHORTSMITH_HYPERFRAMES_VERSION", "0.7.71")
+# The npx package spec. Set SHORTSMITH_HYPERFRAMES_VERSION=latest to float off
+# the pin deliberately.
+HYPERFRAMES_SPEC = ("hyperframes" if HYPERFRAMES_VERSION in ("", "latest")
+                    else f"hyperframes@{HYPERFRAMES_VERSION}")
+
+
+def hyperframes_cmd(*args: str) -> list[str]:
+    """`npx hyperframes@<pin> …` as an argv list, for shell=False callers."""
+    npx = "npx.cmd" if sys.platform == "win32" else "npx"
+    return [npx, HYPERFRAMES_SPEC, *args]
 
 DEFAULT_FILLERS = [
     # Pure stammers — never content.

@@ -231,7 +231,8 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
 
     log.info("DONE.")
     log.info("Output: %s", config.make_output_dir(video))
-    log.info("Try:  cd %s/short-01-* && npx hyperframes preview", config.make_output_dir(video))
+    log.info("Try:  cd %s/short-01-* && npx %s preview",
+             config.make_output_dir(video), config.HYPERFRAMES_SPEC)
 
 
 def _save_manifests(manifests: list[dict], work_dir: Path) -> None:

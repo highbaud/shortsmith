@@ -60,7 +60,7 @@ Forgot `--recurse-submodules`? Run `git submodule update --init --recursive`.
 - **Python 3.12** (managed by [`uv`](https://docs.astral.sh/uv/))
 - **ffmpeg** on PATH
 - **NVIDIA GPU strongly recommended** (Whisper + ClearerVoice + WhisperX all prefer CUDA)
-- **Node 18+** for Hyperframes render + Remotion captions layer
+- **Node 22+** for Hyperframes render + Remotion captions layer (Hyperframes requires 22+)
 - **Anthropic API key** for clip selection (or run Ollama locally for free)
 - **Sibling uv projects** for the heavy lifters — `audio-enhance/`, `whisperx-align/` (Python 3.10/3.11 each), set up by `setup.sh`
 
@@ -99,7 +99,7 @@ Switch backends with `--clip-engine ollama` or `SHORTSMITH_CLIP_ENGINE=ollama`. 
 
 **9. Hyperframes render** — `npx hyperframes render` produces the base mp4 with slam hook + callouts + Ken Burns on the face cam.
 
-**10. Remotion layer** — `scripts/apply_remotion.py` overlays word-level karaoke captions on top of the base render, plus AI-selected b-roll (logos when a brand is named, CC photos when a person is named, charts when a number is cited) sourced from Wikimedia Commons + Openverse + Wikipedia. Output: `final_remotion.mp4`.
+**10. Remotion layer.** `scripts/apply_remotion.py` overlays word-level karaoke captions on top of the base render, plus AI-selected b-roll: a logo when a brand is named, a photo when a person is named. Every asset is **identity-verified against Wikidata before it can appear** (see below). Output: `final_remotion.mp4`.
 
 **11. SFX overlay** — `scripts/add_sfx.py` mixes a curated SFX pack onto the speech. Structural triggers (hook impact at t=0, swipe-in on callouts) + semantic triggers (cash register on first money word, ding on bigstat numbers). Levels approved: peaks at -9 dBFS, sits ~10–16 dB under voice, limiter at the end. Output: `final_sfx.mp4`.
 
@@ -120,6 +120,7 @@ All paths and tunables override via env vars or a project-local `.env` (auto-loa
 | `SHORTSMITH_SFX_SEMANTIC` | `sparing` | SFX mode: `sparing` / `every` / `off` |
 | `SHORTSMITH_WHISPER_MODEL` | `large-v3` | `small` / `medium` / `large-v3` |
 | `SHORTSMITH_MIN_SCORE` | `7` | Reject clips below this viral score (1–10) |
+| `SHORTSMITH_HYPERFRAMES_VERSION` | `0.7.71` | Pinned Hyperframes CLI. `latest` floats off the pin |
 
 ## Common operations
 
@@ -153,7 +154,11 @@ uv run shortsmith run path/to/video.mp4 --cut-aware
 uv run python scripts/reprocess_all.py
 
 # Finalize (Remotion captions + SFX + consolidate) for specific sources only
-uv run python scripts/finalize_slugs.py <source-slug> [<source-slug> ...]
+uv run python scripts/finalize.py --slug <source-slug> [--slug <source-slug> ...]
+
+# Check what every curated person / brand resolves to before rendering
+uv run python scripts/gen_broll.py --audit-people
+uv run python scripts/gen_broll.py --audit-brands
 ```
 
 For batch operations across many source videos, see [`scripts/batch_pipeline.py`](scripts/batch_pipeline.py) and [`scripts/reprocess_all.py`](scripts/reprocess_all.py).
@@ -192,8 +197,45 @@ and run only the finishing layer (hook card + captions + callouts + SFX):
 uv run python scripts/ingest_premade.py <slug> file1.mp4 file2.mp4 ...
 # author work/<slug>/clips.json (hook/callouts/caption per rank), then scaffold,
 # base-render, and:
-uv run python scripts/finalize_slugs.py <slug>
+uv run python scripts/finalize.py --slug <slug>
 ```
+
+## B-roll assets are identity-verified
+
+When the transcript names a person or a brand, the b-roll engine can cut to a photo
+or a logo. The obvious way to find one is to search for the name, and it is wrong:
+a Wikimedia Commons file search matches any file whose *description* mentions those
+words. Searching for "David Schwartz" (Ripple's CTO) returns a photo of Anna
+Schwartz, and `wikipedia.org/wiki/David_Schwartz` is an American composer.
+
+So nothing here searches for a name. The mention is resolved to a **Wikidata entity**
+first, and only assets bound to that entity are eligible:
+
+| Slide | Accepted sources, in order |
+|---|---|
+| Person | the entity's designated portrait (P18), Commons files whose structured data says they *depict* it (P180), members of its own Commons category (P373) |
+| Logo | Simple Icons with the mark's `<title>` checked against the brand, then the entity's logo image (P154), then vectorlogo.zone (unverified, last resort) |
+
+**If identity cannot be established, the slide is dropped.** A missing cutaway is
+invisible to the viewer. A stranger's face under a real name is not.
+
+Curated names and brands are pinned to verified Wikidata QIDs, which is load-bearing
+rather than belt-and-braces. Left to search: "Michael Saylor" resolves to a substitute
+teacher in Kentucky (that item's label is an exact string match, the real one carries a
+middle initial), "Quant" resolves to the TV series Quantico, "Kraken" to a Colombian
+metal band genuinely labelled Kraken, and "Microsoft" to its 1980 wordmark.
+
+Audit what every curated name and brand resolves to, before it reaches a render:
+
+```bash
+uv run python scripts/gen_broll.py --audit-people   # name -> QID -> chosen photo
+uv run python scripts/gen_broll.py --audit-brands   # brand -> source -> chosen mark
+```
+
+Verified photos are cached repo-wide in `assets/people/`, so a person looks identical
+in every short and one correction sticks everywhere. `assets/people/people.json` is the
+audit trail. Full detail, including how to pin a QID or force a specific file:
+[docs/REMOTION.md](docs/REMOTION.md).
 
 ## Visual style presets
 

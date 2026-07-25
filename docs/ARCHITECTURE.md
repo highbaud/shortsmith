@@ -135,7 +135,7 @@ The opening 2.6 s is a **slam hook** — full-screen accent type with scale-in +
 
 `scripts/apply_remotion.py` orchestrates two sub-steps:
 
-**B-roll selection** — `scripts/gen_broll.py` reads the clip's words.json, identifies named brands (logo from Simple Icons / vectorlogo.zone) and persons (CC photos from Wikimedia Commons / Openverse / Wikipedia, shuffled across sources), times them to the spoken word, and writes `broll.auto.json`.
+**B-roll selection.** `scripts/gen_broll.py` reads the clip's words.json, identifies named brands (`scripts/brand_logos.py`: title-verified Simple Icons → Wikidata P154 → vectorlogo.zone) and persons (`scripts/person_photos.py`: name → verified Wikidata entity → photos bound to that entity), times them to the spoken word, and writes `broll.auto.json`. Both resolvers share `scripts/wikidata.py` and drop the slide rather than show an unverified asset.
 
 **Render** — `scripts/render_remotion.py` invokes the Remotion project at `remotion/` (React + Remotion 4.0). Loads the Hyperframes `final.mp4` as a base layer, overlays word-by-word captions tied to `assets/words.json` timings, and inserts b-roll picks at their `broll.auto.json` timestamps. Output: `<project>/renders/final_remotion.mp4`.
 

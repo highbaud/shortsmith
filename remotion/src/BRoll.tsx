@@ -20,6 +20,10 @@ import {
 
 const DEFAULT_BG = "linear-gradient(160deg, #0f2033 0%, #0a1828 55%, #07121c 100%)";
 const FONT = '"Inter", "Helvetica Neue", Arial, sans-serif';
+// Mount b-roll images this many frames before their Sequence starts so they are
+// decoded by the time the cutaway is on screen. ~0.5s at 30fps; premounted
+// frames render nothing, they just warm the asset.
+const PREMOUNT_FRAMES = 15;
 
 /** Fade/scale wrapper shared by all slides. `dur` is the slide length in frames. */
 const SlideShell: React.FC<{
@@ -248,7 +252,11 @@ const LogoMark: React.FC<{
         justifyContent: "center",
       }}
     >
-      <Img src={src} style={{ width: size * 0.7, height: size * 0.7, objectFit: "contain" }} />
+      <Img
+        src={src}
+        premountFor={PREMOUNT_FRAMES}
+        style={{ width: size * 0.7, height: size * 0.7, objectFit: "contain" }}
+      />
     </div>
   );
 
@@ -405,6 +413,9 @@ const PersonCard: React.FC<{ slide: PersonSlide; dur: number }> = ({ slide, dur 
       <AbsoluteFill style={{ overflow: "hidden" }}>
         <Img
           src={staticFile(slide.src)}
+          // Decode ahead of the cutaway's first frame. Without this the photo
+          // pops in a frame or two late, which reads as a stutter at the cut.
+          premountFor={PREMOUNT_FRAMES}
           style={{
             width: "100%",
             height: "100%",

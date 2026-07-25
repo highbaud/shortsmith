@@ -63,6 +63,12 @@ npm-debug.log*
 # Network fetch cache (gen_broll.py)
 .cache/
 
+# Verified person photos (gen_broll.py). The images are third-party CC files we
+# don't redistribute; people.json records the Wikidata QID + Commons filename
+# for each one, so any machine can re-fetch the identical photo.
+assets/people/*
+!assets/people/people.json
+
 # Metricool publish state (post IDs, scheduled timestamps, account IDs —
 # never commit; tokens live in ~/.claude/, never in this repo)
 .publish-state.json
