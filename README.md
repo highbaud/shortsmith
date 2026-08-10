@@ -13,6 +13,8 @@ to broadcast loudness, word-aligned karaoke captions, AI-selected b-roll, and a
 curated sound-effect overlay. End-to-end, your machine. Three command sequence
 from raw mp4 to publish-ready folder.
 
+Built by Max Avery, Principal and CBDO of [DAG](https://www.dag.com)
+
 ```
 your-video.mp4 (3hr podcast, talking-head)
        │
