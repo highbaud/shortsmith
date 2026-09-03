@@ -26,11 +26,9 @@ import urllib.request
 
 from ..config import Config
 from ._common import (
-    covered_topics_block,
-    format_transcript,
     load_system_prompt,
     parse_json_response,
-    performance_block,
+    transcript_with_context,
 )
 
 log = logging.getLogger(__name__)
@@ -49,9 +47,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
     )
     log.info("ollama: calling %s with model=%s", base_url, model)
 
-    transcript_text = (
-        format_transcript(words) + covered_topics_block() + performance_block()
-    )
+    transcript_text = transcript_with_context(words)
     system_prompt = load_system_prompt()
 
     # Append a JSON-only reinforcement — local models often add prose otherwise.

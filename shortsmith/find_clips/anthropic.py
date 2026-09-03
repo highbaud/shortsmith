@@ -10,11 +10,9 @@ import logging
 
 from ..config import Config
 from ._common import (
-    covered_topics_block,
-    format_transcript,
     load_system_prompt,
     parse_json_response,
-    performance_block,
+    transcript_with_context,
 )
 
 log = logging.getLogger(__name__)
@@ -31,9 +29,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
             "with --from-step 3."
         )
 
-    transcript_text = (
-        format_transcript(words) + covered_topics_block() + performance_block()
-    )
+    transcript_text = transcript_with_context(words)
     system_prompt = load_system_prompt()
 
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)

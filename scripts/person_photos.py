@@ -289,12 +289,22 @@ def _category_titles(fetch: Fetch, category: str | None, limit: int = 12) -> lis
 # --------------------------------------------------------------------------- #
 # Ranking
 # --------------------------------------------------------------------------- #
+def _name_tokens(name: str) -> list[str]:
+    """`name` split into lower-case word tokens, in order.
+
+    An apostrophe stays inside a token, so O'Leary is one word rather than two.
+    Every name comparison here goes through this, so "how a name splits" cannot
+    drift between the surname sweep and the filename scorer.
+    """
+    return [t for t in re.split(r"[^A-Za-z']+", name.lower()) if t]
+
+
 def _other_person_surnames(name: str) -> set[str]:
     """Surnames of *other* people we know about, to catch two-subject photos."""
-    own = {t for t in re.split(r"[^A-Za-z']+", name.lower()) if t}
+    own = set(_name_tokens(name))
     others: set[str] = set()
     for known in PERSON_QIDS:
-        tokens = [t for t in re.split(r"[^A-Za-z']+", known.lower()) if len(t) > 3]
+        tokens = [t for t in _name_tokens(known) if len(t) > 3]
         others.update(t for t in tokens if t not in own)
     return others
 
@@ -318,7 +328,7 @@ def score_candidate(title: str, origin: str, width: int, name: str,
         score += W_P18
         reasons.append("designated portrait (P18)")
 
-    name_tokens = [t for t in re.split(r"[^A-Za-z']+", name.lower()) if t]
+    name_tokens = _name_tokens(name)
     stem = lower.rsplit(".", 1)[0]
     if name_tokens and all(re.search(rf"\b{re.escape(t)}", stem) for t in name_tokens):
         score += W_NAME_IN_TITLE

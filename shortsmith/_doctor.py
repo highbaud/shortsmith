@@ -55,16 +55,12 @@ def _bytes(n: int) -> str:
     return f"{n:.1f} TB"
 
 
-def doctor() -> int:
-    """Print health-check rows. Returns 0 if no FAILs, 1 otherwise."""
-    cfg = Config()
+def _check_external_tools() -> int:
+    """ffmpeg / ffprobe, uv and Node on PATH.
+
+    Returns the number of [fail] rows printed.
+    """
     fails = 0
-
-    click.echo("")
-    click.echo("shortsmith doctor")
-    click.echo("=" * 60)
-
-    # --- External binaries -------------------------------------------------
     click.echo("\nExternal tools")
     if _has("ffmpeg") and _has("ffprobe"):
         _row(OK, "ffmpeg / ffprobe on PATH")
@@ -87,7 +83,15 @@ def doctor() -> int:
         _row(WARN, "npm / npx not on PATH",
              "Optional: needed for Hyperframes render + Remotion captions/b-roll layer.")
 
-    # --- Sibling uv projects -----------------------------------------------
+    return fails
+
+
+def _check_sibling_projects(cfg: Config) -> int:
+    """The two sibling uv projects the pipeline shells out to.
+
+    Returns the number of [fail] rows printed.
+    """
+    fails = 0
     click.echo("\nSibling projects")
     if AUDIO_ENHANCE_PROJECT.exists():
         venv = AUDIO_ENHANCE_PROJECT / ".venv"
@@ -119,7 +123,15 @@ def doctor() -> int:
              "Step 6 will fall back to faster-whisper retranscribe "
              "(lower-quality word timings). Set SHORTSMITH_WHISPERX_ALIGN to override.")
 
-    # --- Hyperframes kit ---------------------------------------------------
+    return fails
+
+
+def _check_hyperframes_kit() -> int:
+    """The Hyperframes kit, its CLI pin, and the template reference.
+
+    Returns the number of [fail] rows printed.
+    """
+    fails = 0
     click.echo("\nHyperframes kit")
     # A working kit needs the directory + its video-projects/ tree. Some kit
     # layouts ship a root package.json + node_modules (npx resolves hyperframes
@@ -149,7 +161,15 @@ def doctor() -> int:
         _row(WARN, f"template reference missing at {TEMPLATE_REF}",
              "Set SHORTSMITH_TEMPLATE_REF to a valid template project under the kit.")
 
-    # --- Remotion ----------------------------------------------------------
+    return fails
+
+
+def _check_remotion() -> int:
+    """The Remotion captions + b-roll layer.
+
+    Returns the number of [fail] rows printed.
+    """
+    fails = 0
     click.echo("\nRemotion (captions + b-roll layer)")
     remotion = REPO_ROOT / "remotion"
     if (remotion / "package.json").exists():
@@ -163,7 +183,15 @@ def doctor() -> int:
         _row(WARN, "remotion/ directory missing",
              "Phase 0 of finalize.py will be skipped.")
 
-    # --- SFX pack ----------------------------------------------------------
+    return fails
+
+
+def _check_sfx_pack() -> int:
+    """The built sound-effects pack.
+
+    Returns the number of [fail] rows printed.
+    """
+    fails = 0
     click.echo("\nSound effects")
     pack_json = REPO_ROOT / "assets" / "sfx" / "pack" / "pack.json"
     if pack_json.exists():
@@ -181,7 +209,15 @@ def doctor() -> int:
         _row(WARN, "SFX pack not built",
              "Run: uv run python scripts/build_sfx_pack.py")
 
-    # --- API key + LLM backend --------------------------------------------
+    return fails
+
+
+def _check_clip_backend(cfg: Config) -> int:
+    """The clip-selection backend and its credentials.
+
+    Returns the number of [fail] rows printed.
+    """
+    fails = 0
     click.echo("\nClip selection backend")
     if cfg.clip_engine == "anthropic":
         if cfg.anthropic_api_key:
@@ -200,7 +236,15 @@ def doctor() -> int:
         _row(WARN, f"local-LLM target: {cfg.local_llm_url} model={cfg.local_llm_model}",
              "Make sure your Ollama / LM Studio / vLLM server is running there.")
 
-    # --- YuNet model -------------------------------------------------------
+    return fails
+
+
+def _check_models(cfg: Config) -> int:
+    """The YuNet face-detection weights.
+
+    Returns the number of [fail] rows printed.
+    """
+    fails = 0
     click.echo("\nModels")
     yunet = cfg.yunet_model_path
     if yunet.exists():
@@ -212,6 +256,26 @@ def doctor() -> int:
         _row(FAIL, f"YuNet model missing at {yunet}",
              "curl -L -o models/face_detection_yunet_2023mar.onnx "
              "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx")
+
+    return fails
+
+
+def doctor() -> int:
+    """Print health-check rows. Returns 0 if no FAILs, 1 otherwise."""
+    cfg = Config()
+    fails = 0
+
+    click.echo("")
+    click.echo("shortsmith doctor")
+    click.echo("=" * 60)
+
+    fails += _check_external_tools()
+    fails += _check_sibling_projects(cfg)
+    fails += _check_hyperframes_kit()
+    fails += _check_remotion()
+    fails += _check_sfx_pack()
+    fails += _check_clip_backend(cfg)
+    fails += _check_models(cfg)
 
     # --- Footer ------------------------------------------------------------
     click.echo("")

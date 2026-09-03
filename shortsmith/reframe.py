@@ -42,10 +42,18 @@ import subprocess
 from pathlib import Path
 
 from . import gallery
+from ._media import probe_duration
 from .config import Config
 from .layouts import LayoutSpec, load_preset
 
 log = logging.getLogger(__name__)
+
+# x264 settings the reframe outputs share. `_ENCODE_ARGS` also pins the GOP,
+# which every path sets except the center-crop fallback at the bottom of this
+# module, so that one composes the parts it needs instead.
+_X264_ARGS = ["-c:v", "libx264", "-preset", "medium", "-crf", "18"]
+_MUX_ARGS = ["-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart"]
+_ENCODE_ARGS = [*_X264_ARGS, "-g", "30", "-keyint_min", "30", *_MUX_ARGS]
 
 
 def reframe_all(
@@ -212,6 +220,18 @@ def _filter_detections(raw: list[Detection], src_w: int, src_h: int,
     return used
 
 
+def _median_face(used: list[Detection]) -> tuple[float, float, float]:
+    """Median (center-x, center-y, height) of a filtered detection set.
+
+    The median is what keeps a stray misfire from dragging the crop; taking it
+    per-axis over the same set is the one statistic all three reframe modes
+    agree on.
+    """
+    return (statistics.median(d[0] for d in used),
+            statistics.median(d[1] for d in used),
+            statistics.median(d[2] for d in used))
+
+
 def _crop_geom(avg_face_x: float, avg_face_y: float, avg_face_h: float,
                src_w: int, src_h: int, cfg: Config) -> tuple[int, int, int, int]:
     """Compute (crop_w, crop_h, crop_x, crop_y) ints placing the face at the
@@ -284,9 +304,7 @@ def reframe_one(src_video: Path, out_video: Path, cfg: Config) -> None:
         return
 
     used = _filter_detections(raw, src_w, src_h, cfg, label=src_video.name)
-    avg_x = statistics.median(d[0] for d in used)
-    avg_y = statistics.median(d[1] for d in used)
-    avg_h = statistics.median(d[2] for d in used)
+    avg_x, avg_y, avg_h = _median_face(used)
     cw, ch, cx, cy = _crop_geom(avg_x, avg_y, avg_h, src_w, src_h, cfg)
 
     log.info("Reframe %s: %d raw -> %d filt, src face=(%.0f,%.0f,h=%.0f) "
@@ -345,13 +363,49 @@ def _shot_boundaries(cuts: list[float], duration: float,
     return shots
 
 
-def _probe_duration(src_video: Path) -> float:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(src_video)],
-        check=True, capture_output=True, text=True, encoding="utf-8",
-    )
-    return float(out.stdout.strip())
+def _per_shot_crops(cap, detector, shots: list[tuple[float, float]], fps: float,
+                    src_w: int, src_h: int,
+                    cfg: Config) -> list[tuple[int, int, int, int]]:
+    """One crop window per shot, framed on whoever that shot is pointed at.
+
+    A shot the detector finds nobody in gets the center crop rather than the
+    previous shot's window, so a cutaway to a slide never inherits a face
+    position that is not there any more.
+    """
+    crops: list[tuple[int, int, int, int]] = []
+    for (a, b) in shots:
+        raw = _sample_faces(cap, detector, cfg,
+                            start_frame=int(round(a * fps)),
+                            end_frame=int(round(b * fps)))
+        if raw:
+            used = _filter_detections(raw, src_w, src_h, cfg)
+            avg_x, avg_y, avg_h = _median_face(used)
+            crops.append(_crop_geom(avg_x, avg_y, avg_h, src_w, src_h, cfg))
+        else:
+            crops.append(_center_crop_geom(src_w, src_h))
+    return crops
+
+
+def _cut_aware_filtergraph(shots: list[tuple[float, float]],
+                           crops: list[tuple[int, int, int, int]]) -> str:
+    """Trim each shot, crop it to its own window, scale, then concat the lot.
+
+    Video only (`a=0`): the audio is mapped straight from the source as one
+    continuous stream, so A/V cannot drift the way a concat demuxer's priming
+    gaps make it drift.
+    """
+    parts: list[str] = []
+    labels: list[str] = []
+    for i, ((a, b), (cw, ch, cx, cy)) in enumerate(zip(shots, crops, strict=True)):
+        lbl = f"v{i}"
+        parts.append(
+            f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,"
+            f"crop={cw}:{ch}:{cx}:{cy},scale=1080:1920:flags=lanczos,"
+            f"setsar=1[{lbl}]"
+        )
+        labels.append(f"[{lbl}]")
+    concat = f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[outv]"
+    return ";".join(parts + [concat])
 
 
 def reframe_one_cut_aware(src_video: Path, out_video: Path, cfg: Config) -> None:
@@ -374,7 +428,7 @@ def reframe_one_cut_aware(src_video: Path, out_video: Path, cfg: Config) -> None
         cap.release()
         raise RuntimeError(f"Invalid video dimensions for {src_video}")
 
-    duration = _probe_duration(src_video)
+    duration = probe_duration(src_video)
     min_shot = float(getattr(cfg, "reframe_min_shot_seconds", 0.4))
     cuts = _detect_cuts(src_video, cfg)
     shots = _shot_boundaries(cuts, duration, min_shot)
@@ -392,54 +446,14 @@ def reframe_one_cut_aware(src_video: Path, out_video: Path, cfg: Config) -> None
         str(cfg.yunet_model_path), "", (src_w, src_h),
         cfg.yunet_score_threshold, 0.3, 5000,
     )
-
-    crops: list[tuple[int, int, int, int]] = []
-    for (a, b) in shots:
-        sf = int(round(a * fps))
-        ef = int(round(b * fps))
-        raw = _sample_faces(cap, detector, cfg, start_frame=sf, end_frame=ef)
-        if raw:
-            used = _filter_detections(raw, src_w, src_h, cfg)
-            avg_x = statistics.median(d[0] for d in used)
-            avg_y = statistics.median(d[1] for d in used)
-            avg_h = statistics.median(d[2] for d in used)
-            crops.append(_crop_geom(avg_x, avg_y, avg_h, src_w, src_h, cfg))
-        else:
-            crops.append(_center_crop_geom(src_w, src_h))
+    crops = _per_shot_crops(cap, detector, shots, fps, src_w, src_h, cfg)
     cap.release()
 
     log.info("Cut-aware %s: %d cuts -> %d shots, per-shot crops computed",
              src_video.name, len(cuts), len(shots))
 
-    # Build one filter_complex: trim each shot, crop it to its own window, scale
-    # to 1080x1920, then concat all video segments. Audio is left untouched and
-    # mapped directly from the source (concat a=0).
-    parts: list[str] = []
-    labels: list[str] = []
-    for i, ((a, b), (cw, ch, cx, cy)) in enumerate(zip(shots, crops, strict=True)):
-        lbl = f"v{i}"
-        parts.append(
-            f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS,"
-            f"crop={cw}:{ch}:{cx}:{cy},scale=1080:1920:flags=lanczos,"
-            f"setsar=1[{lbl}]"
-        )
-        labels.append(f"[{lbl}]")
-    concat = f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[outv]"
-    filtergraph = ";".join(parts + [concat])
-
-    subprocess.run([
-        "ffmpeg", "-y",
-        "-i", str(src_video),
-        "-filter_complex", filtergraph,
-        "-map", "[outv]",
-        "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-g", "30", "-keyint_min", "30",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        str(out_video),
-    ], check=True, capture_output=True)
+    _run_ffmpeg_filter_complex(src_video, out_video,
+                               _cut_aware_filtergraph(shots, crops))
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +568,84 @@ def _split_stack_filtergraph(
     return ";".join(parts)
 
 
+def _resolve_tiles(frame, spec: LayoutSpec, label: str,
+                   required: bool) -> list[gallery.Rect] | None:
+    """The two speaker tiles for this source, top panel first.
+
+    A preset may pin the tile geometry measured off the real source. That skips
+    brightness detection, which cannot see a tile whose own content is dark (a
+    black studio backdrop, a speaker in dark clothing). Returns None when the
+    frame is not a two-up gallery and `required` is False; raises when it is.
+    """
+    frame_h, frame_w = frame.shape[:2]
+    tiles = spec.pinned_tiles(frame_w, frame_h)
+    if tiles is None:
+        tiles = gallery.detect_tiles(frame, dark_threshold=spec.dark_threshold)
+        if not gallery.looks_like_two_up(tiles):
+            msg = f"{label}: expected a two-up gallery, found {len(tiles)} tile(s)"
+            if required:
+                raise RuntimeError(msg)
+            log.info("%s; not using split-stack", msg)
+            return None
+
+    # Left tile goes on top by default (reading order); flip for sources where
+    # the guest is on the left.
+    if spec.order.lower() == "rl":
+        tiles = list(reversed(tiles))
+    return tiles
+
+
+def _split_stack_crops(
+    per_tile: list[list[Detection]], tiles: list[gallery.Rect],
+    spec: LayoutSpec, cfg: Config, label: str,
+) -> tuple[list[gallery.Rect], float]:
+    """One square crop per tile, plus the shared face-height target used.
+
+    Each speaker's "natural" framing is how much of a full-tile-height square
+    their face already fills. A speaker sitting close to their webcam can only
+    be zoomed IN, never out past their tile, so the shared target has to be at
+    least the largest natural value, otherwise the two heads end up wildly
+    different sizes in a layout that puts them right on top of each other.
+    """
+    medians: list[tuple[float, float, float] | None] = []
+    naturals: list[float] = []
+    for i, raw in enumerate(per_tile):
+        if not raw:
+            medians.append(None)
+            continue
+        used = _filter_detections(raw, tiles[i].w, tiles[i].h, cfg,
+                                  label=f"{label} tile{i}")
+        mx, my, mh = _median_face(used)
+        medians.append((mx, my, mh))
+        naturals.append(mh / max(1.0, float(min(tiles[i].w, tiles[i].h))))
+
+    target = spec.face_height_frac
+    if naturals and spec.match_face_size:
+        target = max(target, max(naturals))
+
+    crops: list[gallery.Rect] = []
+    for i, med in enumerate(medians):
+        if med is None:
+            log.warning("%s: no face found in tile %d; centering that panel",
+                        label, i)
+            crops.append(gallery.center_square_in_tile(tiles[i]))
+            continue
+        mx, my, mh = med
+        crop = gallery.square_crop_in_tile(
+            mx, my, mh, tiles[i],
+            face_height_frac=target,
+            face_target_y=spec.face_target_y(i),
+        )
+        if spec.avoid_badge:
+            crop = gallery.avoid_corner_badge(
+                crop, tiles[i],
+                badge_w_frac=spec.badge_w_frac,
+                badge_h_frac=spec.badge_h_frac,
+            )
+        crops.append(crop)
+    return crops, target
+
+
 def reframe_one_split_stack(
     src_video: Path, out_video: Path, cfg: Config, required: bool = True,
     preset: str | None = None,
@@ -574,120 +666,55 @@ def reframe_one_split_stack(
 
     spec = load_preset(preset or getattr(cfg, "split_stack_preset", None))
     frame = _grab_gray_frame(src_video)
-    frame_h, frame_w = frame.shape[:2]
 
-    # A preset may pin the tile geometry measured off the real source. That
-    # skips brightness detection, which cannot see a tile whose own content is
-    # dark (a black studio backdrop, a speaker in dark clothing).
-    tiles = spec.pinned_tiles(frame_w, frame_h)
+    tiles = _resolve_tiles(frame, spec, src_video.name, required)
     if tiles is None:
-        tiles = gallery.detect_tiles(frame, dark_threshold=spec.dark_threshold)
-        if not gallery.looks_like_two_up(tiles):
-            msg = (f"{src_video.name}: expected a two-up gallery, found "
-                   f"{len(tiles)} tile(s)")
-            if required:
-                raise RuntimeError(msg)
-            log.info("%s; not using split-stack", msg)
-            return None
-
-    # Left tile goes on top by default (reading order); flip for sources where
-    # the guest is on the left.
-    if spec.order.lower() == "rl":
-        tiles = list(reversed(tiles))
+        return None
 
     layout = spec.layout()
     per_tile = _sample_faces_in_tiles(src_video, tiles, cfg, spec.sample_every)
-
-    # Each speaker's "natural" framing: how much of a full-tile-height square
-    # their face already fills. A speaker sitting close to their webcam can only
-    # be zoomed IN, never out past their tile, so the shared target has to be at
-    # least the largest natural value, otherwise the two heads end up wildly
-    # different sizes in a layout that puts them right on top of each other.
-    medians: list[tuple[float, float, float] | None] = []
-    naturals: list[float] = []
-    for i, raw in enumerate(per_tile):
-        if not raw:
-            medians.append(None)
-            continue
-        used = _filter_detections(raw, tiles[i].w, tiles[i].h, cfg,
-                                  label=f"{src_video.name} tile{i}")
-        mx = statistics.median(d[0] for d in used)
-        my = statistics.median(d[1] for d in used)
-        mh = statistics.median(d[2] for d in used)
-        medians.append((mx, my, mh))
-        naturals.append(mh / max(1.0, float(min(tiles[i].w, tiles[i].h))))
-
-    target = spec.face_height_frac
-    if naturals and spec.match_face_size:
-        target = max(target, max(naturals))
-
-    crops: list[gallery.Rect] = []
-    for i, med in enumerate(medians):
-        if med is None:
-            log.warning("%s: no face found in tile %d; centering that panel",
-                        src_video.name, i)
-            crops.append(gallery.center_square_in_tile(tiles[i]))
-            continue
-        mx, my, mh = med
-        crop = gallery.square_crop_in_tile(
-            mx, my, mh, tiles[i],
-            face_height_frac=target,
-            face_target_y=spec.face_target_y(i),
-        )
-        if spec.avoid_badge:
-            crop = gallery.avoid_corner_badge(
-                crop, tiles[i],
-                badge_w_frac=spec.badge_w_frac,
-                badge_h_frac=spec.badge_h_frac,
-            )
-        crops.append(crop)
+    crops, target = _split_stack_crops(per_tile, tiles, spec, cfg, src_video.name)
 
     log.info("Split-stack %s [%s]: tiles=%s target_face=%.2f crops=%s band=%s",
              src_video.name, spec.name, [(t.w, t.h) for t in tiles], target,
              [(c.w, c.x, c.y) for c in crops], layout.caption_band)
 
-    subprocess.run([
-        "ffmpeg", "-y",
-        "-i", str(src_video),
-        "-filter_complex", _split_stack_filtergraph(crops, layout, spec),
-        "-map", "[outv]",
-        # Exactly one audio mapping from the single input, the panels share one
-        # decoded stream, so there is no second copy of the audio to collide.
-        "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-g", "30", "-keyint_min", "30",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        str(out_video),
-    ], check=True, capture_output=True)
+    _run_ffmpeg_filter_complex(
+        src_video, out_video, _split_stack_filtergraph(crops, layout, spec))
 
     return layout.caption_band
 
 
 def _run_ffmpeg_vf(src_video: Path, out_video: Path, vf: str) -> None:
-    subprocess.run([
-        "ffmpeg", "-y",
-        "-i", str(src_video),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-g", "30", "-keyint_min", "30",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        str(out_video),
-    ], check=True, capture_output=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(src_video), "-vf", vf,
+         *_ENCODE_ARGS, str(out_video)],
+        check=True, capture_output=True,
+    )
+
+
+def _run_ffmpeg_filter_complex(src_video: Path, out_video: Path,
+                               filtergraph: str) -> None:
+    """Encode the filtergraph's [outv] beside the source's own audio.
+
+    Exactly one `-i` and one audio mapping: passing the file twice is what
+    doubles the audio on a two-up source, because each input carries its own
+    copy of the same track.
+    """
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(src_video),
+         "-filter_complex", filtergraph,
+         "-map", "[outv]", "-map", "0:a?",
+         *_ENCODE_ARGS, str(out_video)],
+        check=True, capture_output=True,
+    )
 
 
 def _ffmpeg_center_crop(src_video: Path, out_video: Path) -> None:
     """Dumb fallback: center-crop 9:16 strip."""
-    subprocess.run([
-        "ffmpeg", "-y",
-        "-i", str(src_video),
-        "-vf", "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        str(out_video),
-    ], check=True, capture_output=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", str(src_video),
+         "-vf", "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos",
+         *_X264_ARGS, *_MUX_ARGS, str(out_video)],
+        check=True, capture_output=True,
+    )

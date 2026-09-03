@@ -5,9 +5,8 @@ Output structure (per clip):
     ├── index.html              # rendered from templates/index.html.j2
     ├── meta.json               # rendered from meta.json.j2
     ├── hyperframes.json        # registry pointer
-    ├── compositions/
-    │   ├── ambient-bg.html     # copied verbatim from may-shorts-19
-    │   └── captions.html       # rendered with SEGMENTS baked in
+    ├── compositions/           # emptied of stale sub-comps; every overlay is
+    │                           # inlined into index.html
     ├── assets/
     │   ├── clip-edit.mp4       # the 9:16 reframed clip
     │   └── words.json          # word-level transcript for this clip
@@ -19,18 +18,17 @@ import json
 import logging
 import re
 import shutil
-import subprocess
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ._media import probe_duration
 from .config import TEMPLATE_REF, Config, make_output_dir
 
 log = logging.getLogger(__name__)
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 STYLES_DIR = TEMPLATES_DIR / "styles"
-AMBIENT_BG_SRC = TEMPLATE_REF / "compositions" / "ambient-bg.html"
 
 
 def _load_style(name: str) -> dict:
@@ -146,7 +144,7 @@ def _scaffold_one(
     shutil.copy(final_clip, clip_dst)
 
     # Probe actual final duration (auto-editor may have shortened it further)
-    duration = _probe_duration(clip_dst)
+    duration = probe_duration(clip_dst)
 
     # Load the clip's word-level transcript (from step 6: retranscribe)
     words = _load_clip_words(manifest, rank)
@@ -300,14 +298,35 @@ def _fallback_caption(clip: dict) -> str:
 # frame at the giant display size. Tuned against real overflows ("$800T-$4Q").
 BIGSTAT_MAX_CHARS = 9
 
+# The clips.json callout vocabulary. Both the callouts and the hook accept the
+# same colors, so the mapping lives in one place rather than once per builder.
+VALID_STYLES = {"caption", "punch", "bigstat", "hero"}
+VALID_COLORS = {"gold", "red", "green"}
+_LEGACY_COLORS = {"orange": "red", "cyan": "gold"}
+
+
+def _normalize_color(value: object, default: str) -> str:
+    """A clips.json color name mapped onto the current palette.
+
+    Anything the palette does not carry falls back to `default`, which is the
+    color that builder considers its own baseline.
+    """
+    color = (value or default).lower()
+    color = _LEGACY_COLORS.get(color, color)
+    return color if color in VALID_COLORS else default
+
+
+def _accent_words(raw: object) -> list[str]:
+    """The accent-word list of a clips.json entry, trimmed, blanks dropped."""
+    return [str(w).strip() for w in (raw or []) if str(w).strip()]
+
 
 def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) -> list[dict]:
-    """Build the per-clip callout list and the per-callout render kwargs.
+    """Build the per-clip callout list `index.html.j2` renders.
 
-    Each callout dict the scaffold uses has two pieces:
-      - top-level keys (`comp_id`, `local_start`, `duration`) consumed by
-        `index.html.j2` to wire the sub-composition in.
-      - `render_kwargs` consumed by `callout.html.j2` to produce the comp file.
+    Each dict carries the timing (`local_start`, `duration`), the presentation
+    (`style`, `color`, `eyebrow`) and the pre-escaped `html` / `subline` the
+    template inlines, so the template never sees raw clips.json text.
 
     A clip's `callouts` field in clips.json looks like:
         [{
@@ -322,9 +341,6 @@ def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) ->
     raw = clip.get("callouts") or []
     if not raw:
         return []
-
-    VALID_STYLES = {"caption", "punch", "bigstat", "hero"}
-    VALID_COLORS = {"gold", "red", "green"}
 
     out: list[dict] = []
     for i, co in enumerate(raw, start=1):
@@ -360,16 +376,8 @@ def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) ->
                     rank, i, raw_text, visible, BIGSTAT_MAX_CHARS,
                 )
 
-        color = (co.get("color") or "gold").lower()
-        # Map legacy color names (orange/cyan) to the new palette
-        if color in ("orange",):
-            color = "red"
-        elif color in ("cyan",):
-            color = "gold"
-        if color not in VALID_COLORS:
-            color = "gold"
-
-        accent = [str(w).strip() for w in (co.get("accent") or []) if str(w).strip()]
+        color = _normalize_color(co.get("color"), "gold")
+        accent = _accent_words(co.get("accent"))
         html = _render_text(raw_text, accent, color, style)
         subline_html = ""
         if co.get("subline"):
@@ -415,13 +423,7 @@ def _build_hook(clip: dict, clip_duration: float) -> dict | None:
     if not str(raw.get("text", "")).strip():
         return None
 
-    color = (raw.get("color") or "red").lower()
-    if color in ("orange",):
-        color = "red"
-    elif color in ("cyan",):
-        color = "gold"
-    if color not in ("red", "gold", "green"):
-        color = "red"
+    color = _normalize_color(raw.get("color"), "red")
 
     try:
         duration = float(raw.get("duration", 2.6))
@@ -432,7 +434,7 @@ def _build_hook(clip: dict, clip_duration: float) -> dict | None:
     # Clamp: at least 1.5s for legibility, no more than 30% of clip
     duration = max(1.5, min(duration, max(2.0, clip_duration * 0.30)))
 
-    accent = [str(w).strip() for w in (raw.get("accent") or []) if str(w).strip()]
+    accent = _accent_words(raw.get("accent"))
     # Hook uses the "slam" style — uppercase like a punch
     html = _render_text(str(raw["text"]), accent, color, style="slam")
 
@@ -480,54 +482,3 @@ def _render_text(text: str, accent_words: list[str], color: str, style: str) -> 
                 rendered.append(html_escape.escape(w))
         rendered_lines.append(" ".join(rendered))
     return "<br>".join(rendered_lines)
-
-
-def _copy_ambient_bg(dst: Path, comp_id: str, duration: float) -> None:
-    """Copy ambient-bg.html and rewrite the composition id + duration."""
-    if not AMBIENT_BG_SRC.exists():
-        log.warning("Source ambient-bg.html missing at %s; writing minimal bg", AMBIENT_BG_SRC)
-        dst.write_text(_MINIMAL_BG.format(comp_id=comp_id, duration=duration), encoding="utf-8")
-        return
-
-    src_html = AMBIENT_BG_SRC.read_text(encoding="utf-8")
-    # Replace composition-id and data-duration. We keep all the gorgeous animation
-    # and only retarget IDs so each scaffolded short gets a unique composition id
-    # (otherwise multiple shorts in one Studio session would collide).
-    out = src_html.replace('data-composition-id="ambient-bg"', f'data-composition-id="{comp_id}"')
-    out = out.replace('"ambient-bg"]', f'"{comp_id}"]')
-    out = _replace_duration(out, duration)
-    dst.write_text(out, encoding="utf-8")
-
-
-def _replace_duration(html: str, duration: float) -> str:
-    """Replace hardcoded `data-duration="18.84"` and `TOTAL = 18.84` style refs."""
-    import re
-    new = re.sub(r'data-duration="[\d.]+"', f'data-duration="{duration:.2f}"', html)
-    new = re.sub(r"const TOTAL = [\d.]+", f"const TOTAL = {duration:.2f}", new)
-    return new
-
-
-def _probe_duration(path: Path) -> float:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        check=True, capture_output=True, text=True, encoding="utf-8",
-    )
-    return float(out.stdout.strip())
-
-
-_MINIMAL_BG = """<template id="ambient-bg-template">
-<div data-composition-id="{comp_id}" data-start="0" data-width="1080" data-height="1920" data-duration="{duration}">
-  <div style="position:absolute;inset:0;background:#07121c;"></div>
-  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
-  <script>
-    (function(){{
-      const tl = gsap.timeline({{paused:true}});
-      tl.set({{}},{{}},{duration});
-      window.__timelines = window.__timelines || {{}};
-      window.__timelines["{comp_id}"] = tl;
-    }})();
-  </script>
-</div>
-</template>
-"""

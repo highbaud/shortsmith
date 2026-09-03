@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 from shortsmith import sfx
@@ -77,6 +78,24 @@ def best_render(proj: Path) -> Path | None:
     if not cands:
         return None
     return max(cands, key=lambda p: p.stat().st_mtime)
+
+
+def scoped_projects(slugs: set[str] | None) -> Iterator[tuple[Path, Path]]:
+    """(source folder, short project) for every scaffolded short under
+    auto-shorts/, in name order.
+
+    `slugs` is the --slug filter: None means the whole library, a set keeps
+    only those source folders. Phases 0 and 2 walk the same tree with the same
+    filter, so the walk lives here rather than in each of them.
+    """
+    for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
+        if not src_dir.is_dir():
+            continue
+        if slugs is not None and src_dir.name not in slugs:
+            continue
+        for proj in sorted(src_dir.glob("short-*")):
+            if proj.is_dir():
+                yield src_dir, proj
 
 
 def find_render(work_slug: str, rank: int) -> tuple[Path, Path] | None:
@@ -146,25 +165,18 @@ def phase0_remotion(style: str, force: bool = False,
     _clear_remotion_cache()  # once per run, before the first render bundles
     ar.reset_stats()
     applied = skipped = 0
-    for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
-        if not src_dir.is_dir():
-            continue
-        if slugs is not None and src_dir.name not in slugs:
-            continue
-        for proj in sorted(src_dir.glob("short-*")):
-            if not proj.is_dir():
-                continue
-            try:
-                out = ar.apply_remotion(proj, style=style, force=force)
-            except Exception as e:  # noqa: BLE001 - one short shouldn't sink the run
-                log.warning("  Remotion failed for %s: %s", proj.name, e)
-                out = None
-            if out:
-                applied += 1
-                if applied % 25 == 0:
-                    log.info("  Remotion applied to %d shorts so far...", applied)
-            else:
-                skipped += 1
+    for _src_dir, proj in scoped_projects(slugs):
+        try:
+            out = ar.apply_remotion(proj, style=style, force=force)
+        except Exception as e:  # noqa: BLE001 - one short shouldn't sink the run
+            log.warning("  Remotion failed for %s: %s", proj.name, e)
+            out = None
+        if out:
+            applied += 1
+            if applied % 25 == 0:
+                log.info("  Remotion applied to %d shorts so far...", applied)
+        else:
+            skipped += 1
     stats = ar.RUN_STATS
     log.info("Phase 0 done: rendered=%d current=%d legacy(untouched)=%d skipped(no base)=%d "
              "b-roll failures=%d", stats["rendered"], stats["current"],
@@ -253,36 +265,29 @@ def phase2_consolidate(slugs: set[str] | None = None,
     """
     ALL_DIR.mkdir(parents=True, exist_ok=True)
     copied = bad = 0
-    for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
-        if not src_dir.is_dir():
-            continue
-        if slugs is not None and src_dir.name not in slugs:
-            continue
-        for proj in sorted(src_dir.glob("short-*")):
-            if not proj.is_dir():
+    for src_dir, proj in scoped_projects(slugs):
+        sfx_mp4 = proj / "renders" / "final_sfx.mp4"
+        if not sfx_mp4.exists():
+            if not allow_unmixed:
                 continue
-            sfx_mp4 = proj / "renders" / "final_sfx.mp4"
-            if not sfx_mp4.exists():
-                if not allow_unmixed:
-                    continue
-                fallback = best_render(proj)
-                if fallback is None:
-                    continue
-                log.info("  %s: no final_sfx.mp4; consolidating %s",
-                         proj.name, fallback.name)
-                sfx_mp4 = fallback
-            base = f"{src_dir.name}__{proj.name}"
-            # QA: a deliverable must have audio and be a 1080x1920 vertical video.
-            has_audio, w, h = _qa_streams(sfx_mp4)
-            if not has_audio or (w, h) != (1080, 1920):
-                log.warning("  QA FAIL %s: has_audio=%s dims=%dx%d (still consolidating)",
-                            base, has_audio, w, h)
-                bad += 1
-            shutil.copy(sfx_mp4, ALL_DIR / f"{base}.mp4")
-            cap = proj / "caption.txt"
-            if cap.exists():
-                shutil.copy(cap, ALL_DIR / f"{base}.txt")
-            copied += 1
+            fallback = best_render(proj)
+            if fallback is None:
+                continue
+            log.info("  %s: no final_sfx.mp4; consolidating %s",
+                     proj.name, fallback.name)
+            sfx_mp4 = fallback
+        base = f"{src_dir.name}__{proj.name}"
+        # QA: a deliverable must have audio and be a 1080x1920 vertical video.
+        has_audio, w, h = _qa_streams(sfx_mp4)
+        if not has_audio or (w, h) != (1080, 1920):
+            log.warning("  QA FAIL %s: has_audio=%s dims=%dx%d (still consolidating)",
+                        base, has_audio, w, h)
+            bad += 1
+        shutil.copy(sfx_mp4, ALL_DIR / f"{base}.mp4")
+        cap = proj / "caption.txt"
+        if cap.exists():
+            shutil.copy(cap, ALL_DIR / f"{base}.txt")
+        copied += 1
     log.info("Phase 2 done: consolidated %d shorts -> %s (%d QA warnings)",
              copied, ALL_DIR, bad)
     return copied

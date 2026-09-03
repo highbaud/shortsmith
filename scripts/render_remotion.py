@@ -266,8 +266,6 @@ def _face_aware_band(base_abs: Path, platform: str) -> dict:
 
     # 80th pct chin (respects downward head moves without chasing one outlier);
     # 20th pct hairline for the above-head option.
-    # 80th pct chin (respects downward head moves without chasing one outlier);
-    # 20th pct hairline for the above-head option.
     return _choose_band(pct(tops, 0.20), pct(bottoms, 0.80), platform)
 
 
@@ -493,7 +491,7 @@ def _merge_broll(short_dir: Path, broll_arg: str | None) -> list[dict]:
             data = json.loads(auto_path.read_text(encoding="utf-8"))
             if isinstance(data, list):
                 auto = data
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, OSError):
             print(f"  ! ignoring malformed {auto_path.name}")
     if auto:
         # Auto person slides are re-verified here, not trusted: a broll.auto.json

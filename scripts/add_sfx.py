@@ -65,7 +65,10 @@ def find_render(work_slug: str, rank: int) -> tuple[Path, Path] | None:
         cands: list[Path] = []
         rdir = proj / "renders"
         if rdir.is_dir():
-            cands += [p for p in rdir.glob("*.mp4") if p.stem != "final_sfx"]
+            # Skip staged temps (_base.mp4, _sfx_tmp.mp4) a crashed render can
+            # leave behind, or the newest file is an uncaptioned intermediate.
+            cands += [p for p in rdir.glob("*.mp4")
+                      if p.stem != "final_sfx" and not p.stem.startswith("_")]
         if KIT_RENDERS.is_dir():
             cands += list(KIT_RENDERS.glob(f"{proj.name}_*.mp4"))
         if cands:

@@ -26,6 +26,13 @@ const FONT = '"Inter", "Helvetica Neue", Arial, sans-serif';
 // frames render nothing, they just warm the asset.
 const PREMOUNT_FRAMES = 15;
 
+// Every slide shares the same fade: 6 frames in at the head, 7 frames out at
+// the tail. `dur` is the slide length in frames.
+const CLAMP = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
+const fadeIn = (frame: number): number => interpolate(frame, [0, 6], [0, 1], CLAMP);
+const fadeOut = (frame: number, dur: number): number =>
+  interpolate(frame, [dur - 7, dur], [1, 0], CLAMP);
+
 /** Fade/scale wrapper shared by all slides. `dur` is the slide length in frames. */
 const SlideShell: React.FC<{
   background?: string;
@@ -35,14 +42,8 @@ const SlideShell: React.FC<{
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const enter = spring({ frame, fps, config: { damping: 18, mass: 0.7 } });
-  const inFade = interpolate(frame, [0, 6], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const outFade = interpolate(frame, [dur - 7, dur], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const inFade = fadeIn(frame);
+  const outFade = fadeOut(frame, dur);
   return (
     <AbsoluteFill
       style={{
@@ -274,10 +275,7 @@ const LogoBadge: React.FC<{ slide: LogoSlide; dur: number; anchor?: BadgeAnchor 
   const color = slide.color ?? "#ffffff";
   const src = staticFile(slide.src);
   const pop = spring({ frame, fps, config: { damping: 16, mass: 0.7, stiffness: 130 } });
-  const outFade = interpolate(frame, [dur - 7, dur], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const outFade = fadeOut(frame, dur);
   const enter = interpolate(pop, [0, 1], [0, 1]);
 
   if (anchor) {
@@ -438,14 +436,8 @@ const PersonCard: React.FC<{ slide: PersonSlide; dur: number }> = ({ slide, dur 
   else if (motion === "up") ty = -pan;
   else if (motion === "down") ty = pan;
 
-  const inFade = interpolate(frame, [0, 6], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const outFade = interpolate(frame, [dur - 7, dur], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const inFade = fadeIn(frame);
+  const outFade = fadeOut(frame, dur);
 
   return (
     <AbsoluteFill style={{ background: "#000", opacity: Math.min(inFade, outFade) }}>

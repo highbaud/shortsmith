@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.6.0] — Unreleased
+## [0.6.0] - Unreleased
 
 ### Fixed
 
@@ -258,7 +258,7 @@ Windows correctness:
   cover the trigger taxonomy (sparing/every/off modes, intensity
   propagation, effect-duration defaults, prop shape). Total now 61.
 
-## [0.5.1] — Unreleased
+## [0.5.1] - 2026-05-28
 
 ### Added
 - **SFX pack ships with the repo.** Whitelisted `assets/sfx/**` (raw drops
@@ -290,7 +290,7 @@ Windows correctness:
 ### Changed
 - `.gitignore` excludes `.claude/` (local Claude Code session state).
 
-## [0.5.0] — Unreleased
+## [0.5.0] - 2026-05-28
 
 ### Added
 - **`shortsmith doctor`** — new CLI command that prints a green/red health
@@ -327,7 +327,7 @@ Windows correctness:
 - `.gitignore` excludes `whisperx-align/.venv/`, `whisperx-align/checkpoints/`,
   and the new `.cache/` directory.
 
-## [0.4.0] — Unreleased
+## [0.4.0] - 2026-05-28
 
 ### Added
 - **Sound effects (SFX) overlay pass** (`shortsmith/sfx.py` + `scripts/add_sfx.py`).
@@ -361,7 +361,7 @@ Windows correctness:
 - `.gitignore` excludes `remotion/node_modules/`, `node_modules/`, and
   generated `broll.auto.json` files.
 
-## [0.3.0] — Unreleased
+## [0.3.0] - 2026-05-28
 
 ### Added
 - **WhisperX forced alignment** (`shortsmith/align.py`) — re-transcribes each
@@ -393,7 +393,7 @@ Windows correctness:
 - `.env.example` documents `SHORTSMITH_LUFS`, `SHORTSMITH_ALIGN`,
   `SHORTSMITH_WHISPERX_ALIGN`.
 
-## [0.2.0] — Unreleased
+## [0.2.0] - 2026-05-28
 
 ### Added
 - **First-run wizard** in `shortsmith run`. If `SHORTSMITH_CLIP_ENGINE` or

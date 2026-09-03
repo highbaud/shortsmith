@@ -70,12 +70,17 @@ See [docs/SETUP.md](docs/SETUP.md) for per-OS install, CUDA torch matrix, model 
 
 Step 2 calls an LLM once per source video with the full transcript:
 
-| Source length | Approx. cost (Claude Opus 4) | Free alternative |
+| Source length | Approx. cost | Free alternative |
 |---|---|---|
-| 30 min | $0.10 | Ollama llama3.1:70b |
-| 1 hr | $0.20 | LM Studio + any 70B |
-| 2 hr | $0.50 | vLLM + any OpenAI-compatible |
-| 3 hr | $0.80 | Hand-write `clips.json`, run `--from-step 3` |
+| 30 min | $0.08 | Ollama llama3.1:70b |
+| 1 hr | $0.12 | LM Studio + any 70B |
+| 2 hr | $0.18 | vLLM + any OpenAI-compatible |
+| 3 hr | $0.25 | Hand-write `clips.json`, run `--from-step 3` |
+
+Costed against the shipped default, `claude-opus-4-7` at $5 / $25 per million
+input / output tokens (verified 2026-09-03), assuming roughly 10,000 transcript
+words per hour of source and a small fixed JSON reply. Change the model with
+`SHORTSMITH_CLAUDE_MODEL`; `claude-opus-5` is the same price.
 
 Switch backends with `--clip-engine ollama` or `SHORTSMITH_CLIP_ENGINE=ollama`. The rubric is at [`prompts/find_viral_clips.md`](prompts/find_viral_clips.md) — edit it for your content.
 

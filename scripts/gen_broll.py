@@ -57,6 +57,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 # Reuse the exact overlay-window derivation the renderer uses, so the free gaps
 # we author into match what Hyperframes actually rendered.
@@ -565,16 +566,26 @@ def _record_manifest(name: str, entry: dict) -> None:
         pass
 
 
+def _image_hits(directory: Path, slug: str) -> list[Path]:
+    """Photos for `slug` in `directory`, sorted by name.
+
+    Image suffixes only. A <slug>.json note dropped beside a photo would
+    otherwise sort first and become the slide `src`, and the stale-file sweep
+    in `_download_person` would delete it.
+    """
+    if not directory.exists():
+        return []
+    return sorted(p for p in directory.glob(f"{slug}.*")
+                  if p.suffix.lower() in IMAGE_SUFFIXES)
+
+
 def _cached_person_photo(slug: str) -> Path | None:
     hits = _cached_person_photos(slug)
     return hits[0] if hits else None
 
 
 def _manual_person_photo(slug: str) -> Path | None:
-    if not MANUAL_DIR.exists():
-        return None
-    hits = sorted(p for p in MANUAL_DIR.glob(f"{slug}.*")
-                  if p.suffix.lower() in IMAGE_SUFFIXES)
+    hits = _image_hits(MANUAL_DIR, slug)
     return hits[0] if hits else None
 
 
@@ -597,13 +608,7 @@ def _manual_provenance(photo: Path) -> dict[str, str]:
 
 
 def _cached_person_photos(slug: str) -> list[Path]:
-    # Image suffixes only, the same filter the manual lookup applies. A
-    # <slug>.json note dropped beside the photo would otherwise sort first and
-    # become the slide `src`, and the stale-file sweep below would delete it.
-    if not PEOPLE_DIR.exists():
-        return []
-    return sorted(p for p in PEOPLE_DIR.glob(f"{slug}.*")
-                  if p.suffix.lower() in IMAGE_SUFFIXES)
+    return _image_hits(PEOPLE_DIR, slug)
 
 
 def _download_person(name: str, out_dir: Path, seed: int | None = None,
@@ -695,7 +700,7 @@ def verify_person_slides(slides: list[dict], short_dir: Path,
         if slide.get("type") != "person":
             kept.append(slide)
             continue
-        name = slide.get("person") or slide.get("name") or ""
+        name = _identity(slide, "person")
         out_dir.mkdir(parents=True, exist_ok=True)
         src = resolve(name, out_dir, role_hint=slide.get("role") or "") if name else None
         if not src:
@@ -736,6 +741,17 @@ def _missing_identity(slide: dict, kind: str) -> str:
     if any(slide.get(k) for k in keys):
         return ""
     return " or ".join(keys)
+
+
+def _identity(slide: dict, kind: str) -> Any:
+    """What this slide is ABOUT: the first `_IDENTITY_KEYS` value it carries,
+    else "". The lookup order is the table's, so the brand/person key wins over
+    the shared `name` fallback and every caller agrees on the same answer.
+
+    Returns the payload verbatim, `Any` rather than `str`: the slide came from
+    an LLM or a hand-written JSON file, so the value is whatever was in it.
+    """
+    return next((slide[k] for k in _IDENTITY_KEYS.get(kind, ()) if slide.get(k)), "")
 
 
 def _normalize(slides: list[dict], gaps: list[tuple[float, float]]) -> list[dict]:
@@ -795,7 +811,7 @@ def drop_on_camera_people(slides: list[dict], speakers: list[str]) -> list[dict]
         return slides
     kept: list[dict] = []
     for s in slides:
-        name = (s.get("person") or s.get("name") or "") if s.get("type") == "person" else ""
+        name = _identity(s, "person") if s.get("type") == "person" else ""
         if name and any(_same_person(name, sp) for sp in speakers):
             print(f"  ! {name} is on camera; dropping the person slide")
             continue
@@ -814,7 +830,7 @@ def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
         if s["type"] == "logo":
             # Read, never pop: the key is the only identity a slide with no
             # `name` carries, and broll.auto.json is re-read at render time.
-            brand = s.get("brand") or s.get("name") or ""
+            brand = _identity(s, "logo")
             if dry_run:
                 s["src"] = f"(would fetch logo: {brand})"
                 resolved.append(s)
@@ -826,7 +842,7 @@ def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
             s["src"], s["monochrome"] = got
             resolved.append(s)
         elif s["type"] == "person":
-            person = s.get("person") or s.get("name") or ""
+            person = _identity(s, "person")
             if dry_run:
                 s["src"] = f"(would fetch photo: {person})"
                 resolved.append(s)

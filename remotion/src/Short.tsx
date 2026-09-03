@@ -344,7 +344,7 @@ const ShortInner: React.FC<ShortProps> = (props) => {
     }
     return ok;
   }, [broll]);
-  const isBadge = (s: typeof broll[number]) => s.type === "logo" && s.mode === "badge";
+  const isBadge = (s: BRollSlide) => s.type === "logo" && s.mode === "badge";
   const brollWindows: TimeWindow[] = slides
     .filter((s) => !isBadge(s))
     .map((s) => ({ start: s.start, end: s.end }));
@@ -355,7 +355,7 @@ const ShortInner: React.FC<ShortProps> = (props) => {
   const zoomScale = useZoomPunchScale(vfxEvents);
   // Ambient punch-ins reset attention in dead talking-head stretches. Composed
   // multiplicatively with the semantic zoom-punch; both rest at 1.0.
-  const ambientScale = ambientPunchScale(frame / props.fps, ambientPunches);
+  const ambientScale = ambientPunchScale(frame / fps, ambientPunches);
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>

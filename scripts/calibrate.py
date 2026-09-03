@@ -89,6 +89,9 @@ def load_ledger() -> list[dict]:
         ledger = json.loads(LEDGER.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return []
+    if not isinstance(ledger, dict):
+        print(f"  ! ignoring {LEDGER.name}: expected an object, got {type(ledger).__name__}")
+        return []
     out: list[dict] = []
     for brand, brand_map in ledger.items():
         if not isinstance(brand_map, dict):
@@ -246,10 +249,14 @@ def main() -> int:
         for p in sorted(args.analytics.glob("*.json")):
             try:
                 raw_inputs.append(json.loads(p.read_text(encoding="utf-8")))
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, OSError):
                 print(f"  ! skipping malformed {p.name}")
     elif args.analytics.exists():
-        raw_inputs.append(json.loads(args.analytics.read_text(encoding="utf-8")))
+        try:
+            raw_inputs.append(json.loads(args.analytics.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            print(f"analytics input is not readable JSON: {args.analytics}")
+            return 1
     else:
         print(f"analytics input not found: {args.analytics}")
         return 1

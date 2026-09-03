@@ -13,6 +13,7 @@ import logging
 import subprocess
 from pathlib import Path
 
+from ._media import probe_duration
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -251,7 +252,7 @@ def _ffmpeg_concat_with_xfade(
 
     # Build complex xfade filter chain.
     # First we need each segment's duration.
-    durations = [_probe_duration(p) for p in seg_paths]
+    durations = [probe_duration(p) for p in seg_paths]
 
     inputs: list[str] = []
     for p in seg_paths:
@@ -291,12 +292,3 @@ def _ffmpeg_concat_with_xfade(
         str(out_path),
     ]
     subprocess.run(cmd, check=True, capture_output=True)
-
-
-def _probe_duration(path: Path) -> float:
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        check=True, capture_output=True, text=True, encoding="utf-8",
-    )
-    return float(out.stdout.strip())

@@ -43,11 +43,13 @@ source.mp4 (3-hour podcast)
 
 Errors get actionable hints (`SHORTSMITH_WHISPER_MODEL=medium` for OOM, `SHORTSMITH_WHISPER_DEVICE=cpu` for CUDA mismatch) instead of raw torch stacks.
 
+`shortsmith/names.py` primes and corrects the transcript's proper nouns. `initial_prompt()` (the default `whisper_initial_prompt`) hands Whisper a glossary of names and terms to bias decoding toward: Whisper keeps only the prompt's last 224 tokens, so people are listed last, where they survive truncation. `fix_words()` then respells the mishearings that get through anyway (an unambiguous non-word correction like "ginsler" to "Gensler" applies wherever it appears; a real-word mishearing like "sailor" to "Saylor" only when capitalized or preceded by the person's first name). It runs on the word list whether Whisper just produced it or a sibling transcript was reused, so the clip finder, captions, and b-roll detection all see the same corrected spellings.
+
 ### Step 2: Find clips
 
 `shortsmith/find_clips/`. Dispatcher selects between two backends:
 
-- **`anthropic`** (default) — single Claude Opus call with the full transcript collapsed into `[t=NNs]`-marked sentences. Best quality; costs $0.10–$2.00 per source video.
+- **`anthropic`** (default): single Claude Opus call with the full transcript collapsed into `[t=NNs]`-marked sentences. Best quality; costs roughly $0.08 to $0.25 per source video (see the cost table in the README).
 - **`ollama`** (experimental) — any OpenAI-compatible local endpoint (Ollama / LM Studio / vLLM). Free; expect lower picking quality. Retries on bad JSON with falling temperature.
 
 Both produce the same schema. The system prompt at [`prompts/find_viral_clips.md`](../prompts/find_viral_clips.md) enforces:
@@ -57,6 +59,8 @@ Both produce the same schema. The system prompt at [`prompts/find_viral_clips.md
 - **Hook isolation** — Claude marks the strongest 5–10 seconds within each clip.
 - **Reorder for hook-first delivery** — if the killer line lands at 0:18 inside a 0:30 clip, output `[[18, 28], [0, 18], [28, 30]]`.
 - **Viral score 1–10**, reject floor `SHORTSMITH_MIN_SCORE` (default 7).
+
+Both prompts also carry a **performance calibration** block (`shortsmith/find_clips/_common.py`'s `performance_block()`) when `calibration/top_topics.json` and `weak_topics.json` exist: past angles that performed well or fell flat, added as a tie-breaker rather than a hard filter. Those files come from `scripts/calibrate.py`, which joins Metricool analytics (dumped via the Metricool MCP into `calibration/analytics/`) against `scheduled_ledger.json` by nearest publish date within a day, scores each matched topic as views + 6x saves + 5x shares + 2x comments + likes (views for reach, saves and shares weighted up as the strongest intent signal), and writes `top_topics.json`, `weak_topics.json`, and a `report.md` summary. This is what turns `viral_score` from Claude's taste into the audience's revealed preference; until the loop is seeded the block is empty and Step 2 behaves exactly as before.
 
 ### Step 3: Cut + reorder
 
@@ -98,6 +102,8 @@ Cuts NEVER land inside a word — enforced in code, not handed off to a silence 
 
 Falls back to in-process faster-whisper re-transcribe if WhisperX is unavailable (no sibling venv, or the project failed to spawn).
 
+`names.fix_words()` runs again on every clip's aligned word list, whichever engine produced it: realignment re-transcribes, so a mishearing Step 1 already fixed can otherwise reappear.
+
 ### Step 7: Reframe 9:16
 
 `shortsmith/reframe.py`. **YuNet face detection** every 3rd frame (10 detections/sec at 30 fps). Each detection passes through five filters:
@@ -109,6 +115,8 @@ Falls back to in-process faster-whisper re-transcribe if WhisperX is unavailable
 5. **Spatial sanity clamp** (if median lands within 10% of any edge, clamp toward safe zone).
 
 After filtering, the median x/y/height drives a single static crop window for the whole clip (talking heads barely move horizontally; static crop avoids "tracked zoom" sickness). Target framing: face center at 40% from top, occupies ~32% of vertical.
+
+An alternative mode, **split-stack**, handles gallery-view sources: Zoom, Riverside, and StreamYard recordings where both speakers share one frame side by side, which a single static crop can only frame one of. `shortsmith/gallery.py` detects the two bright webcam tiles against the dark surround (falling back cleanly when the frame is not a two-up gallery), crops a square around each speaker's own face, and stacks the two squares vertically with a caption band in the gap between them so captions never cross a face. `shortsmith/layouts.py` supplies every geometry and styling decision (panel size, margins, per-panel face target position, badge avoidance, border and dressing) as a named preset loaded from `templates/layouts/*.json` (default `two-speaker-stack`), so a format tuned on real footage is reused verbatim instead of re-derived. Select it with `--layout split-stack` (fails if the source is not a two-up gallery), `--layout auto` (falls back to the static crop when it is not), `SHORTSMITH_REFRAME_LAYOUT`, or per clip via clips.json `"layout"` / `"layout_preset"`.
 
 ---
 
@@ -133,7 +141,9 @@ The opening 2.6 s is a **slam hook** — full-screen accent type with scale-in +
 
 ### Step 10: Remotion captions + b-roll
 
-`scripts/apply_remotion.py` orchestrates two sub-steps:
+`scripts/apply_remotion.py` orchestrates b-roll generation and the render itself, and skips both when the existing output is already current:
+
+**Up-to-date check.** `scripts/render_stamp.py` fingerprints everything a render depends on: the Hyperframes base render (file size plus nanosecond-precision mtime, so a same-size base swapped inside one second still counts as changed), `words.json`, the clip's entry in `_clips.json`, any hand-authored `broll.json`, the photo state of every person the transcript names (manifest, manual, and cached photo), a SHA-256 digest of 25 render-relevant code and template files, and the style, platform, and captions switches. All of that hashes into one digest, written beside the output as `final_remotion.stamp.json`; a matching digest skips the render, and `render_stamp.changed_inputs()` reports what changed when it does not match. This replaced a plain mtime comparison against the Hyperframes base, which missed a resolver fix, a caption change, a new manual photo, or a corrected transcript, and let stale renders ship. A short with no stamp at all predates the stamp system and keeps the old mtime rule, so an unscoped `finalize.py` run does not silently rebuild the whole library; `--force` always rebuilds.
 
 **B-roll selection.** `scripts/gen_broll.py` reads the clip's words.json, identifies named brands (`scripts/brand_logos.py`: title-verified Simple Icons → Wikidata P154 → vectorlogo.zone) and persons (`scripts/person_photos.py`: name → verified Wikidata entity → photos bound to that entity), times them to the spoken word, and writes `broll.auto.json`. Both resolvers share `scripts/wikidata.py` and drop the slide rather than show an unverified asset.
 
@@ -186,6 +196,8 @@ work/<source-slug>/
 
 ```
 hyperframes-student-kit/video-projects/auto-shorts/<source-slug>/
+├── _transcript.json                  # copy of the whole-source transcript (step 8)
+├── _clips.json                       # authored clips.json + reframe-derived fields (step 8)
 └── short-NN-<hook>/
     ├── index.html                    # scaffold output (step 8)
     ├── meta.json
@@ -194,10 +206,12 @@ hyperframes-student-kit/video-projects/auto-shorts/<source-slug>/
     ├── assets/words.json
     ├── assets/broll/*.{svg,jpg,png}  # b-roll downloads (step 10)
     ├── broll.auto.json               # b-roll timing (step 10)
+    ├── broll.json                    # optional hand-authored b-roll override (step 10)
     ├── compositions/ambient-bg.html
     └── renders/
         ├── final.mp4                 # step 9 Hyperframes
         ├── final_remotion.mp4        # step 10 Remotion
+        ├── final_remotion.stamp.json # step 10 render-input digest
         └── final_sfx.mp4             # step 11 SFX
 
 hyperframes-student-kit/renders/_all/

@@ -13,6 +13,8 @@ from pathlib import Path
 
 from slugify import slugify
 
+from ..config import REPO_ROOT
+
 log = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "find_viral_clips.md"
@@ -20,6 +22,20 @@ PROMPT_PATH = Path(__file__).resolve().parent.parent.parent / "prompts" / "find_
 
 def load_system_prompt() -> str:
     return PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _load_json(path: Path, default):
+    """Parsed JSON at `path`, or `default` when it is absent or unreadable.
+
+    Every steer block below is optional: a missing, half-written or
+    hand-mangled sidecar must cost the run nothing more than that block.
+    """
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return default
 
 
 _SHORT_SLUG_RE = re.compile(r"__short-\d+-(.+)$")
@@ -34,15 +50,7 @@ def covered_topics_block(limit: int = 40) -> str:
     distinct topics, and formats them as readable phrases. Returns "" when the
     ledger is absent or empty, so callers can append unconditionally.
     """
-    from ..config import REPO_ROOT
-
-    ledger_path = REPO_ROOT / "scheduled_ledger.json"
-    if not ledger_path.exists():
-        return ""
-    try:
-        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return ""
+    ledger = _load_json(REPO_ROOT / "scheduled_ledger.json", {})
 
     # (date, topic_phrase) across every brand map in the ledger.
     seen: dict[str, str] = {}  # topic_phrase -> most-recent date
@@ -83,18 +91,10 @@ def performance_block(limit: int = 12) -> str:
     seeded. This is the mechanism that turns viral_score from taste into the
     audience's revealed preference.
     """
-    from ..config import REPO_ROOT
-
     cal = REPO_ROOT / "calibration"
 
     def _load(name: str) -> list[str]:
-        p = cal / name
-        if not p.exists():
-            return []
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return []
+        data = _load_json(cal / name, None)
         return [str(x) for x in data][:limit] if isinstance(data, list) else []
 
     top = _load("top_topics.json")
@@ -139,6 +139,15 @@ def format_transcript(words: list[dict]) -> str:
         parts.append(" ".join(line_buf))
 
     return "\n".join(parts).strip()
+
+
+def transcript_with_context(words: list[dict]) -> str:
+    """The transcript plus every steer block, in the order the backends send.
+
+    Both backends feed the model the same thing; only the transport differs, so
+    a block added here reaches Claude and the local endpoint together.
+    """
+    return format_transcript(words) + covered_topics_block() + performance_block()
 
 
 def parse_json_response(raw: str) -> list[dict]:

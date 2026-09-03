@@ -306,7 +306,9 @@ class Config:
     # crops a square around each speaker and stacks them, first on top, with the
     # captions in the gap between so they never cross a face.
     #   "static": one crop for the clip (default; unchanged behavior)
-    #   "split-stack": force the stacked layout, fail if it is not a gallery
+    #   "split-stack": force the stacked layout. Non-gallery footage does not
+    #       abort the run: reframe_all logs a warning and falls back to the
+    #       center crop for that clip, so one wrong clip cannot cost the batch.
     #   "auto": use it when a two-up gallery is detected, else static
     # Override per run with --layout / SHORTSMITH_REFRAME_LAYOUT, or per clip via
     # clips.json "layout": "split-stack".
