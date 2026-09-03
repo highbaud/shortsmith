@@ -24,7 +24,10 @@ jobs:
       # (`python-version` and `enable-cache`): the other breaking changes are
       # `server-url` removal, a new `manifest-file` format, a `prune-cache`
       # default flip, and caching disabled for sensitive events.
-      - uses: astral-sh/setup-uv@v10
+      #
+      # Pinned to an exact patch, not `@v10`: setup-uv dropped its moving
+      # major-tag workflow in v8.0.0, so `v6` resolved but `v10` does not exist.
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: "3.12"
           enable-cache: true
