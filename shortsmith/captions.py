@@ -65,7 +65,7 @@ def shift_words_to_zero(words: list[dict], reference_start: float) -> list[dict]
     out = []
     for w in words:
         out.append({
-            "text": w.get("text") or w.get("word"),
+            "text": w.get("text") or w.get("word") or "",
             "start": round(float(w["start"]) - reference_start, 3),
             "end": round(float(w["end"]) - reference_start, 3),
         })

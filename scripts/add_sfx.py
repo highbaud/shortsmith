@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,9 +37,12 @@ def probe_duration(p: Path) -> float:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", str(p)],
-            check=True, capture_output=True, text=True)
+            check=True, capture_output=True, text=True, encoding="utf-8")
         return float(out.stdout.strip())
-    except Exception:
+    except Exception as e:
+        # A 0 duration clamps every callout event to t=0, so say so rather than
+        # writing a plausible-looking mix with all the SFX stacked on frame 1.
+        log.warning("ffprobe failed for %s (%s); SFX timing will be wrong", p.name, e)
         return 0.0
 
 
@@ -72,6 +76,14 @@ def find_render(work_slug: str, rank: int) -> tuple[Path, Path] | None:
 
 def main() -> int:
     overwrite = "--overwrite" in sys.argv
+    missing_tools = [t for t in ("ffmpeg", "ffprobe") if shutil.which(t) is None]
+    if missing_tools:
+        log.error("Not on PATH: %s. Run `uv run shortsmith doctor` for install hints.",
+                  ", ".join(missing_tools))
+        return 1
+    if not WORK_ROOT.is_dir():
+        log.error("No work dir yet: %s. Run the pipeline first.", WORK_ROOT)
+        return 1
     cfg = Config()
     sfx_map = sfx.load_sfx_map()
     if not sfx_map:
@@ -98,6 +110,9 @@ def main() -> int:
 
         for clip in clips:
             rank = clip.get("rank")
+            if not isinstance(rank, int):
+                skipped += 1
+                continue
             found = find_render(wd.name, rank)
             if not found:
                 skipped += 1

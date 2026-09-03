@@ -55,6 +55,15 @@ BADGE_TOP_CLEAR = 134  # 0.07 * 1920
 class LayoutPresetError(RuntimeError):
     """A split-stack clip whose layout preset cannot be loaded."""
 
+
+class BrollSpecError(RuntimeError):
+    """A hand-authored b-roll slide list that cannot be read.
+
+    An exception rather than sys.exit: finalize renders the whole library in
+    one process and guards each short with `except Exception`, which SystemExit
+    walks straight through, so one unreadable broll.json used to end the run.
+    """
+
 # Fallback palette if no style preset resolves.
 DEFAULT_PALETTE = {
     "primary": "#f5c542",
@@ -78,7 +87,7 @@ def _probe_duration(path: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     return float(out.stdout.strip())
 
@@ -443,10 +452,13 @@ def _load_broll(short_dir: Path, broll_arg: str | None) -> list[dict]:
         if not path.exists():
             return []
     if not path.exists():
-        sys.exit(f"B-roll list not found: {path}")
-    data = json.loads(path.read_text(encoding="utf-8"))
+        raise BrollSpecError(f"B-roll list not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        raise BrollSpecError(f"B-roll JSON cannot be read ({e}): {path}") from e
     if not isinstance(data, list):
-        sys.exit(f"B-roll JSON must be a list of slides: {path}")
+        raise BrollSpecError(f"B-roll JSON must be a list of slides: {path}")
     return data
 
 
@@ -508,9 +520,42 @@ def _merge_broll(short_dir: Path, broll_arg: str | None) -> list[dict]:
             continue
         kept_auto.append(s)
 
+    def sort_key(s: dict) -> float:
+        # Tolerant: a hand-written slide with a missing or non-numeric start
+        # used to raise here, before _validate_broll could report it and drop
+        # it. Unsortable slides go first and are named there.
+        sp = span(s)
+        return sp[0] if sp else 0.0
+
     merged = manual + kept_auto
-    merged.sort(key=lambda s: float(s.get("start", 0)))
+    merged.sort(key=sort_key)
     return merged
+
+
+# What each slide type's Remotion card actually reads. A `list` with no `items`
+# or a `logo`/`person` with no `src` does not draw a blank card, it throws
+# (`.map` of undefined, `staticFile(undefined)`) and the whole render is lost.
+# Slides come from an LLM or a hand-written broll.json, so the payload is never
+# guaranteed. Kept in step with remotion/src/Short.tsx `isRenderable`.
+_REQUIRED_FIELD: dict[str, str] = {
+    "text": "title", "list": "items", "logo": "src", "person": "src",
+}
+
+
+def _missing_payload(slide: dict) -> str:
+    """The required field this slide lacks, or "" when it is renderable."""
+    kind = slide.get("type")
+    if kind == "stat":
+        to = slide.get("to")
+        numeric_to = isinstance(to, (int, float)) and not isinstance(to, bool)
+        return "" if slide.get("value") or numeric_to else "value"
+    if kind == "list":
+        items = slide.get("items")
+        return "" if isinstance(items, list) and items else "items"
+    field = _REQUIRED_FIELD.get(str(kind))
+    if field is None:
+        return f"type ({kind!r} is not a slide type)"
+    return "" if slide.get(field) else field
 
 
 def _validate_broll(broll: list[dict], overlays: list[dict], duration: float) -> list[dict]:
@@ -528,6 +573,10 @@ def _validate_broll(broll: list[dict], overlays: list[dict], duration: float) ->
             continue
         if b > duration + 0.05:
             print(f"  ! skipping b-roll slide past clip end ({a}-{b} > {duration:.1f}s)")
+            continue
+        missing = _missing_payload(s)
+        if missing:
+            print(f"  ! skipping b-roll slide missing {missing}: {s!r}")
             continue
         clash = next((w for w in overlays if a < w["end"] and b > w["start"]), None)
         if clash:
@@ -739,7 +788,7 @@ def main() -> None:
         render(args.short_dir, captions=args.captions, platform=args.platform,
                base_mode=args.base_mode, broll_arg=args.broll, output=args.output,
                style=args.style, open_after=args.open)
-    except LayoutPresetError as e:
+    except (LayoutPresetError, BrollSpecError) as e:
         sys.exit(str(e))
 
 

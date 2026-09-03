@@ -228,7 +228,7 @@ def apply_sfx(final_mp4: Path, events: list[SfxEvent], sfx_map: dict[str, list[P
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart", str(out_mp4),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         log.error("SFX mix failed for %s: %s", final_mp4.name, (proc.stderr or "")[-400:])
         return False

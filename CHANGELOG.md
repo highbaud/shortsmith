@@ -4,6 +4,75 @@ All notable changes to this project will be documented in this file.
 
 ## [0.6.0] — Unreleased
 
+### Fixed
+
+**Hardening pass before merge.** Six parallel reviews across the whole tree, each
+bug reproduced before it was fixed and pinned by a test that fails without the
+fix. 258 tests to 353.
+
+Render-killing crashes:
+
+- **One malformed b-roll slide destroyed the whole render.** A `list` slide with
+  no `items` or a `logo`/`person` slide with no `src` reached the Remotion
+  composition intact and threw (`.map` of undefined, `staticFile(undefined)`),
+  exit 1, losing every cutaway in the short rather than the one bad slide.
+  Slides are LLM-written, and Python only ever checked `start` and `end`. Now
+  validated at both stages, since the contract differs: `gen_broll._normalize`
+  requires the identity key a slide is resolved by, and
+  `render_remotion._validate_broll` requires the `src` that resolution produced.
+  `Short.tsx` drops the same shapes as a second line of defense.
+- **A malformed hook in one clip threw away every rendered project in the batch**
+  (`scaffold._build_hook`), as did a string `rank` from the model at
+  `find_clips._common.normalize_clips`, whose sort sits outside the per-clip
+  `try`. A bad `broll.json` did the same via `sys.exit` through finalize's
+  handler, now a catchable `BrollSpecError`.
+
+Wrong output that reported success:
+
+- **A stale video could ship.** The render stamp hashed `int(st_mtime)`, so two
+  different base renders of the same byte size inside one second read as
+  identical. Now nanoseconds. Three real inputs were also outside the code
+  digest (`config.py`, `sfx.py`, `templates/styles/*/style.json`), a
+  `STAMP_VERSION` bump did not force a re-render, and a corrupt stamp reverted
+  to the weaker mtime rule instead of re-rendering.
+- **Transcript reuse could caption a short from the wrong transcript.** The tag
+  match was a substring test, so `transcript-xrp.json` matched
+  `xrp-deaton-interview.mp4`; with both present the winner depended on directory
+  order. Longest match now wins.
+- **A person photo was downloaded, then discarded.** `_resolve_assets` popped the
+  `person`/`brand` key it had just resolved from, so `verify_person_slides` saw
+  an empty name and dropped the slide reporting `no verified photo for ''`.
+- **`--skip-sfx` consolidated nothing and printed success**, because phase 2 only
+  ever looked for `final_sfx.mp4`.
+- **A deleted Wikidata pin looked resolved.** `wbgetentities` returns a truthy
+  `missing` stub, which defeated the documented fall-through to search.
+
+Windows correctness:
+
+- **24 `subprocess` calls decoded output without `encoding="utf-8"`.** On Windows
+  `text=True` decodes as cp1252, and a byte such as `0x81` (present in Á, Í, Ð,
+  kana) kills the reader thread so `stdout` comes back as `None`. That crashed
+  the SFX index scan and, worse, silently gave `add_sfx` a duration of `0.0`, so
+  every sound effect fired at `t=0` and the run reported success.
+- `names.fix_words` wrote `"end": null` into words.json when merging two tokens
+  that both lacked an end, turning a skippable word into one that crashed
+  captions. `align` crashed with `KeyError` on `--from-step 6` after a run that
+  stopped at step 3. `checkpoint` crashed on exactly the half-written file it
+  exists to recover from. A whisperx timeout orphaned the process, which then
+  contended for the GPU with its own fallback.
+
+### Changed
+
+- **CI now discovers modules instead of listing them.** The hand-written import
+  list had gone stale: `shortsmith.names`, `.layouts`, `.gallery` and every
+  `scripts/` module were never imported by it, so an import error reached a
+  render run before it reached CI. `tests/test_import_smoke.py` walks the tree
+  and also asserts no module does work at import time.
+- Failures that used to be swallowed now report: ffmpeg reasons keep their
+  stderr instead of `returned non-zero exit status 1`, a malformed layout preset
+  raises `ValueError` so its own handler can fire, and `probe_duration` warns
+  rather than returning `0.0` in silence.
+
 ### Changed
 - **Split-stack shorts get their b-roll back.** They lost all of it when the
   layout landed, because the logo badge's upper-center spot is the top

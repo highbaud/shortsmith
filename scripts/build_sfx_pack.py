@@ -134,7 +134,7 @@ CURATION: dict[str, list[tuple[str, str]]] = {
 def measure_peak_db(p: Path) -> float | None:
     out = subprocess.run(
         ["ffmpeg", "-hide_banner", "-i", str(p), "-af", "volumedetect", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     m = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB", out.stderr)
     return float(m.group(1)) if m else None
@@ -152,7 +152,7 @@ def normalize_one(src: Path, dst: Path) -> bool:
     proc = subprocess.run(
         ["ffmpeg", "-y", "-hide_banner", "-i", str(src),
          "-af", af, "-ac", "2", "-ar", "48000", str(dst)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     if proc.returncode != 0 or not dst.exists():
         log.error("normalize failed for %s: %s", src.name, (proc.stderr or "")[-300:])
@@ -185,6 +185,11 @@ def main() -> int:
     log.info("Wrote pack.json with slots: %s", ", ".join(manifest))
     if missing:
         log.warning("Raw files referenced but not found (skipped): %s", ", ".join(missing))
+    if not manifest:
+        # An empty pack.json renders every SFX slot unavailable, so exit non-zero
+        # instead of reporting success over a pack that has no sounds in it.
+        log.error("No slots built. Drop the curated source files in %s first.", SFX_DIR)
+        return 1
     return 0
 
 

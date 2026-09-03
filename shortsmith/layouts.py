@@ -140,6 +140,14 @@ def load_preset(name: str | None = None) -> LayoutSpec:
             f"Layout preset {name!r} not found at {path} (available: {available})"
         )
     raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        # A ValueError, so callers that already translate a bad preset into an
+        # actionable message (render_remotion._split_stack_layout) catch it
+        # instead of seeing a bare AttributeError from .items() below.
+        raise ValueError(
+            f"Layout preset {name!r} at {path} must be a JSON object, "
+            f"got {type(raw).__name__}"
+        )
     known = {f.name for f in fields(LayoutSpec)}
     data = {k: v for k, v in raw.items() if k in known}
     if data.get("tiles") is not None:

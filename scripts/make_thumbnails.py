@@ -54,7 +54,8 @@ def _hook_time(proj: Path, dur: float) -> float:
     """Mid-point of the opening (hook) overlay window; fall back to ~1s."""
     try:
         wins = rr._overlay_windows(proj, dur)
-    except Exception:
+    except Exception as e:
+        print(f"warning: {proj.name}: could not read overlay windows ({e}); falling back to ~1s hook time")
         wins = []
     t = (wins[0]["start"] + wins[0]["end"]) / 2.0 if wins else min(1.0, dur * 0.1)
     return max(0.3, min(t, dur - 0.1))

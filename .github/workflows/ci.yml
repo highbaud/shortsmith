@@ -32,28 +32,12 @@ jobs:
       - name: ruff
         run: uv run ruff check .
 
-      - name: import smoke
-        shell: bash
-        run: |
-          uv run python -c "
-          import shortsmith
-          import shortsmith.config
-          import shortsmith.pipeline
-          import shortsmith.transcribe
-          import shortsmith.find_clips
-          import shortsmith.cut_clips
-          import shortsmith.clean_clips
-          import shortsmith.enhance_audio
-          import shortsmith.reframe
-          import shortsmith.scaffold
-          import shortsmith.captions
-          import shortsmith.align
-          import shortsmith.normalize
-          import shortsmith.checkpoint
-          import shortsmith.sfx
-          import shortsmith.vfx
-          print('OK')
-          "
+      # Discovers every shipped module instead of naming them. The previous
+      # hand-written list silently went stale: shortsmith.names, .layouts,
+      # .gallery and all of scripts/ were never imported here, so an import
+      # error in any of them reached a render run before it reached CI.
+      - name: import smoke (every shipped module)
+        run: uv run pytest tests/test_import_smoke.py -q
 
       - name: CLI help
         run: uv run shortsmith --help

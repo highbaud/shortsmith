@@ -48,7 +48,8 @@ def _broll_keywords(proj: Path) -> list[str]:
         return out
     try:
         data = json.loads(bp.read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        print(f"warning: {proj.name}: broll.auto.json unreadable ({e})")
         return out
     slides = data if isinstance(data, list) else data.get("slides", [])
     for s in slides:
@@ -123,8 +124,8 @@ def main() -> int:
                 for c in json.loads(clips_path.read_text(encoding="utf-8")):
                     if isinstance(c, dict) and c.get("rank") is not None:
                         clips_by_rank[int(c["rank"])] = c
-            except Exception:
-                pass
+            except (json.JSONDecodeError, OSError, ValueError, TypeError) as e:
+                print(f"warning: {src_dir.name}: _clips.json unreadable ({e})")
         for proj in sorted(src_dir.glob("short-*")):
             if not proj.is_dir():
                 continue

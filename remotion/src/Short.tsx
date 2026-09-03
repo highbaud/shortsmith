@@ -16,7 +16,7 @@ import { Video } from "@remotion/media";
 import { loadFont } from "@remotion/google-fonts/Anton";
 import { BRoll } from "./BRoll";
 import { Flash, Glare, useZoomPunchScale } from "./VFX";
-import { CaptionBand, Palette, PanelRect, ShortProps, SpeakerLabel, TimeWindow, Word } from "./types";
+import { BRollSlide, CaptionBand, Palette, PanelRect, ShortProps, SpeakerLabel, TimeWindow, Word } from "./types";
 
 // Anton: heavy condensed display face, matches the Hyperframes hook/callouts.
 // waitUntilDone() resolves once the webfont is actually parsed/ready — we block
@@ -274,6 +274,27 @@ function ambientPunchScale(t: number, punches: number[], peak = 1.045): number {
   return scale;
 }
 
+/** True when a slide carries the fields its card actually reads. The slide list
+ *  is hand-authored or LLM-generated JSON and only its start/end are checked on
+ *  the Python side, so a `list` with no `items` or a `logo`/`person` with no
+ *  `src` arrives intact and takes the whole render down (`.map` of undefined,
+ *  `staticFile(undefined)`). A `text` with no title or a `stat` with no number
+ *  survives, but hides the base video behind a blank card, which is worse than
+ *  not cutting away at all. */
+function isRenderable(slide: BRollSlide): boolean {
+  switch (slide.type) {
+    case "text":
+      return Boolean(slide.title);
+    case "stat":
+      return Boolean(slide.value) || typeof slide.to === "number";
+    case "list":
+      return Array.isArray(slide.items) && slide.items.length > 0;
+    case "logo":
+    case "person":
+      return Boolean(slide.src);
+  }
+}
+
 /** Inner component so the useCurrentFrame() inside useZoomPunchScale runs in a
  *  context that's already inside the Composition. Keeps the parent Short
  *  unchanged for callers that pass no vfxEvents. */
@@ -311,8 +332,20 @@ const ShortInner: React.FC<ShortProps> = (props) => {
       .catch(() => continueRender(fontHandle));
   }, [fontHandle]);
 
+  // Drop malformed slides before anything reads them, so one bad entry costs
+  // its own cutaway rather than the render. Dropping it here also drops its
+  // caption-yield window below, so the captions keep running through the gap.
+  const slides = useMemo(() => {
+    const ok = broll.filter(isRenderable);
+    if (ok.length < broll.length) {
+      console.warn(
+        `Skipped ${broll.length - ok.length} b-roll slide(s) missing required fields`,
+      );
+    }
+    return ok;
+  }, [broll]);
   const isBadge = (s: typeof broll[number]) => s.type === "logo" && s.mode === "badge";
-  const brollWindows: TimeWindow[] = broll
+  const brollWindows: TimeWindow[] = slides
     .filter((s) => !isBadge(s))
     .map((s) => ({ start: s.start, end: s.end }));
   const yieldWindows = [...overlayWindows, ...brollWindows];
@@ -350,7 +383,7 @@ const ShortInner: React.FC<ShortProps> = (props) => {
                        panels={speakerPanels} palette={palette} />
       ) : null}
 
-      {broll.map((slide, i) => {
+      {slides.map((slide, i) => {
         const from = Math.round(slide.start * fps);
         const durationInFrames = Math.max(1, Math.round((slide.end - slide.start) * fps));
         return (

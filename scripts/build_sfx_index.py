@@ -157,7 +157,7 @@ def ffprobe_stats(p: Path) -> dict | None:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries",
              "stream=duration,sample_rate,channels", "-of", "json", str(p)],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", check=True,
         )
         data = json.loads(out.stdout)
         streams = data.get("streams", [])
@@ -178,7 +178,7 @@ def measure_levels(p: Path) -> dict:
     """Return {peak_dbfs, mean_dbfs} via ffmpeg volumedetect."""
     out = subprocess.run(
         ["ffmpeg", "-hide_banner", "-i", str(p), "-af", "volumedetect", "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     peak = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB", out.stderr)
     mean = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?) dB", out.stderr)

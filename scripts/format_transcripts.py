@@ -37,6 +37,9 @@ def format_one(words: list[dict]) -> str:
 
 
 def main() -> int:
+    if not WORK_ROOT.is_dir():
+        print(f"No work dir yet: {WORK_ROOT}. Run the pipeline first.")
+        return 0
     count = 0
     for wd in sorted(WORK_ROOT.iterdir()):
         if not wd.is_dir():

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import os
 import random
@@ -491,7 +492,8 @@ def _http_get(url: str, *, max_retries: int = 3) -> bytes | None:
                 continue
             print(f"    fetch failed {url}: HTTP {e.code}")
             break
-        except (urllib.error.URLError, TimeoutError, OSError) as e:
+        except (urllib.error.URLError, TimeoutError, OSError,
+                http.client.HTTPException) as e:
             print(f"    fetch failed {url}: {e}")
             break
 
@@ -595,7 +597,13 @@ def _manual_provenance(photo: Path) -> dict[str, str]:
 
 
 def _cached_person_photos(slug: str) -> list[Path]:
-    return sorted(PEOPLE_DIR.glob(f"{slug}.*")) if PEOPLE_DIR.exists() else []
+    # Image suffixes only, the same filter the manual lookup applies. A
+    # <slug>.json note dropped beside the photo would otherwise sort first and
+    # become the slide `src`, and the stale-file sweep below would delete it.
+    if not PEOPLE_DIR.exists():
+        return []
+    return sorted(p for p in PEOPLE_DIR.glob(f"{slug}.*")
+                  if p.suffix.lower() in IMAGE_SUFFIXES)
 
 
 def _download_person(name: str, out_dir: Path, seed: int | None = None,
@@ -706,16 +714,47 @@ def verify_person_slides(slides: list[dict], short_dir: Path,
 # to Hyperframes overlays. (Manual broll.json may still use "stat" directly.)
 VALID_TYPES = {"text", "list", "logo", "person"}
 
+# What a slide needs to carry at generation time, before `_resolve_assets` runs.
+# A logo/person slide is looked up by `brand`/`person` (falling back to `name`),
+# so one with neither resolves to "" and is dropped several steps later with the
+# misleading message `no verified photo for ''`. This is the pre-resolution
+# contract; `render_remotion._missing_payload` is the post-resolution one, which
+# checks `src` instead because by then the asset has been fetched.
+_IDENTITY_KEYS: dict[str, tuple[str, ...]] = {
+    "text": ("title",),
+    "logo": ("brand", "name"),
+    "person": ("person", "name"),
+}
+
+
+def _missing_identity(slide: dict, kind: str) -> str:
+    """The content key this slide lacks, or "" when it can be resolved."""
+    if kind == "list":
+        items = slide.get("items")
+        return "" if isinstance(items, list) and items else "items"
+    keys = _IDENTITY_KEYS.get(kind, ())
+    if any(slide.get(k) for k in keys):
+        return ""
+    return " or ".join(keys)
+
 
 def _normalize(slides: list[dict], gaps: list[tuple[float, float]]) -> list[dict]:
     out: list[dict] = []
     for s in slides:
+        # The model engine hands back whatever parsed out of its JSON array, so
+        # a stray string or nested list reaches here as a slide.
+        if not isinstance(s, dict):
+            continue
         t = s.get("type")
         if t not in VALID_TYPES:
             continue
         try:
             start, end = float(s["start"]), float(s["end"])
         except (KeyError, ValueError, TypeError):
+            continue
+        missing = _missing_identity(s, t)
+        if missing:
+            print(f"  ! dropping {t} {start}-{end}: no {missing}")
             continue
         fit = _fit_into_gap(start, end, gaps)
         if not fit:
@@ -773,7 +812,9 @@ def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
     resolved: list[dict] = []
     for s in slides:
         if s["type"] == "logo":
-            brand = s.pop("brand", None) or s.get("name") or ""
+            # Read, never pop: the key is the only identity a slide with no
+            # `name` carries, and broll.auto.json is re-read at render time.
+            brand = s.get("brand") or s.get("name") or ""
             if dry_run:
                 s["src"] = f"(would fetch logo: {brand})"
                 resolved.append(s)
@@ -785,7 +826,7 @@ def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
             s["src"], s["monochrome"] = got
             resolved.append(s)
         elif s["type"] == "person":
-            person = s.pop("person", None) or s.get("name") or ""
+            person = s.get("person") or s.get("name") or ""
             if dry_run:
                 s["src"] = f"(would fetch photo: {person})"
                 resolved.append(s)

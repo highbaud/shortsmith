@@ -40,7 +40,7 @@ def _probe(p: Path) -> tuple[bool, int, int, float]:
             ["ffprobe", "-v", "error", "-show_entries",
              "stream=codec_type,width,height:format=duration",
              "-of", "json", str(p)],
-            check=True, capture_output=True, text=True)
+            check=True, capture_output=True, text=True, encoding="utf-8")
         info = json.loads(out.stdout)
         streams = info.get("streams", [])
         has_audio = any(s.get("codec_type") == "audio" for s in streams)
@@ -52,6 +52,13 @@ def _probe(p: Path) -> tuple[bool, int, int, float]:
 
 
 def main() -> int:
+    # Without ffprobe every probe returns zeros, which would report each
+    # deliverable as broken instead of reporting the missing tool.
+    if shutil.which("ffprobe") is None:
+        print("ffprobe not on PATH, so deliverables cannot be verified.")
+        print("Run `uv run shortsmith doctor` for install hints.")
+        return 1
+
     if not ALL_DIR.exists():
         print(f"No deliverables dir yet: {ALL_DIR}\n(run finalize.py first)")
         return 1

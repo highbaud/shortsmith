@@ -29,7 +29,11 @@ def align_all(manifests: list[dict], cfg: Config) -> list[dict]:
     # Build the job list (clip mp4 -> sibling words.json).
     jobs: list[tuple[dict, Path, Path]] = []
     for m in manifests:
-        clip_path = Path(m.get("enhanced_path") or m["cleaned_path"])
+        # Same fallback chain as every other step: resuming with --from-step 6
+        # loads manifests that step 4 and step 5 never touched, so the only
+        # path on them is the raw cut.
+        clip_path = Path(m.get("enhanced_path") or m.get("cleaned_path")
+                         or m["raw_path"])
         words_out = clip_path.with_suffix(".words.json")
         jobs.append((m, clip_path, words_out))
 
@@ -112,10 +116,17 @@ def _run_whisperx_batch(jobs: list[tuple[Path, Path]], cfg: Config) -> set[str]:
     manifest = [{"in": str(src), "out": str(dst)} for src, dst in jobs]
     proc = subprocess.Popen(
         ["uv", "run", "--project", str(WHISPERX_ALIGN_PROJECT), "python", str(align_batch_py)],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
         env={**os.environ, "WHISPERX_INITIAL_PROMPT": cfg.whisper_initial_prompt or ""},
     )
-    stdout, stderr = proc.communicate(input=json.dumps(manifest), timeout=7200)
+    try:
+        stdout, stderr = proc.communicate(input=json.dumps(manifest), timeout=7200)
+    except subprocess.TimeoutExpired:
+        # Leave nothing holding the GPU: the caller falls back to in-process
+        # faster-whisper, which would collide with an abandoned whisperx.
+        proc.kill()
+        proc.communicate()
+        raise
 
     ok: set[str] = set()
     for line in stdout.splitlines():

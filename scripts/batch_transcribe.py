@@ -47,6 +47,9 @@ def find_pending() -> list[Path]:
 
 
 def main() -> int:
+    if not VIDEO_DIR.is_dir():
+        log.error("Video dir not found: %s. Set SHORTSMITH_VIDEO_DIR.", VIDEO_DIR)
+        return 1
     cfg = Config()
     pending = find_pending()
     log.info("Found %d pending videos to transcribe", len(pending))

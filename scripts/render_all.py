@@ -41,7 +41,7 @@ def render_project(project_dir: Path) -> bool:
         cwd=str(KIT_ROOT),
         shell=True,
         capture_output=True,
-        text=True,
+        text=True, encoding="utf-8",
     )
     if proc.returncode != 0:
         log.error("render failed for %s (exit=%d)\nstderr=%s",

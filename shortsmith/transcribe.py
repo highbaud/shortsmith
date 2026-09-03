@@ -32,13 +32,21 @@ def transcribe(
         # Look for any transcript-*.json that matches a slug substring of the video name
         sib_dir = video_path.parent
         stem_lower = video_path.stem.lower()
+        # Several videos can share a directory, and a short slug is a substring
+        # of a longer one ("xrp" matches "xrp-deaton.mp4" too). Take the LONGEST
+        # matching tag so the choice is the most specific transcript rather than
+        # whichever one the directory happened to list first.
+        matches: list[tuple[int, Path]] = []
         for candidate in sib_dir.glob("transcript-*.json"):
-            tag = candidate.stem.replace("transcript-", "").lower()
+            tag = candidate.stem.removeprefix("transcript-").lower()
             if tag and tag in stem_lower:
-                log.info("Reusing existing transcript %s", candidate)
-                words = names.fix_words(json.loads(candidate.read_text(encoding="utf-8")))
-                _write_words(out_path, words)
-                return words
+                matches.append((len(tag), candidate))
+        if matches:
+            candidate = max(matches)[1]
+            log.info("Reusing existing transcript %s", candidate)
+            words = names.fix_words(json.loads(candidate.read_text(encoding="utf-8")))
+            _write_words(out_path, words)
+            return words
 
     # Lazy import: faster-whisper is heavy
     from faster_whisper import WhisperModel

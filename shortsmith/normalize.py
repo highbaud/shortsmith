@@ -73,7 +73,7 @@ def loudnorm_two_pass(in_wav: Path, out_wav: Path, cfg: Config) -> bool:
     measure = subprocess.run(
         ["ffmpeg", "-hide_banner", "-i", str(in_wav),
          "-af", build_measure_filter(cfg), "-f", "null", "-"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     measured = _parse_loudnorm_json(measure.stderr)
     if not measured:
@@ -87,7 +87,7 @@ def loudnorm_two_pass(in_wav: Path, out_wav: Path, cfg: Config) -> bool:
         ["ffmpeg", "-y", "-hide_banner", "-i", str(in_wav),
          "-af", build_apply_filter(cfg, measured),
          "-ar", "48000", str(out_wav)],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8",
     )
     if apply.returncode != 0 or not out_wav.exists():
         log.warning("loudnorm pass-2 apply failed for %s; copying unnormalized",

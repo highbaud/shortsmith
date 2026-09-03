@@ -107,8 +107,20 @@ def main() -> int:
 
     if not args.blog_id:
         ap.error("--blog-id (or SHORTSMITH_METRICOOL_BLOG_ID) is required.")
+    if not args.all_dir.is_dir():
+        ap.error(f"--all-dir not found: {args.all_dir}")
+    if args.per_day < 1:
+        ap.error(f"--per-day must be at least 1 (got {args.per_day}).")
     networks = [n.strip() for n in args.networks.split(",") if n.strip()]
+    if not networks:
+        ap.error("--networks must name at least one network.")
     times = [t.strip() for t in args.times.split(",") if t.strip()]
+    if not times:
+        ap.error("--times must list at least one HH:MM posting time.")
+    for t in times:
+        parts = t.split(":")
+        if len(parts) != 2 or not all(part.isdigit() for part in parts):
+            ap.error(f"--times entries must be HH:MM (got {t!r}).")
     url_map = json.loads(args.url_map.read_text(encoding="utf-8"))
     start = datetime.strptime(args.start, "%Y-%m-%d").date()
 

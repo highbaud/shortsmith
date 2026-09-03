@@ -13,6 +13,7 @@ audio, and is at least 3 seconds long.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,12 @@ VIDEO = REPO_ROOT / "examples" / "sample_clip.mp4"
 
 
 def main() -> int:
+    missing_tools = [t for t in ("ffprobe", "uv") if shutil.which(t) is None]
+    if missing_tools:
+        print(f"ERROR: not on PATH: {', '.join(missing_tools)}", file=sys.stderr)
+        print("Run `uv run shortsmith doctor` for install hints.", file=sys.stderr)
+        return 2
+
     if not VIDEO.exists():
         print(f"ERROR: sample clip not found at {VIDEO}", file=sys.stderr)
         print(
@@ -87,15 +94,16 @@ def main() -> int:
     # ffprobe sanity check
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-print_format", "json",
-         "-show_streams", str(vertical)],
-        capture_output=True, text=True,
+         "-show_streams", "-show_format", str(vertical)],
+        capture_output=True, text=True, encoding="utf-8",
     )
     if probe.returncode != 0:
         print(f"ERROR: ffprobe failed: {probe.stderr}", file=sys.stderr)
         return 5
     info = json.loads(probe.stdout)
-    vstream = next((s for s in info["streams"] if s["codec_type"] == "video"), None)
-    astream = next((s for s in info["streams"] if s["codec_type"] == "audio"), None)
+    streams = info.get("streams", [])
+    vstream = next((s for s in streams if s.get("codec_type") == "video"), None)
+    astream = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
     ok = True
     if not vstream or vstream.get("width") != 1080 or vstream.get("height") != 1920:
@@ -107,8 +115,8 @@ def main() -> int:
     # Be lenient on duration — silence trimming on a short sample can land
     # anywhere from 1-9 seconds. Anything >0.5s with the right dims + audio
     # proves the pipeline ran end-to-end.
-    dur = float(info.get("format", {}).get("duration", 0)) if "format" in info else 0
-    sdur = float(vstream.get("duration", 0)) if vstream else 0
+    dur = float(info.get("format", {}).get("duration") or 0)
+    sdur = float(vstream.get("duration") or 0) if vstream else 0
     if max(dur, sdur) < 0.5:
         print(f"FAIL: output too short ({max(dur, sdur)}s)", file=sys.stderr)
         ok = False

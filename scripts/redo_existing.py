@@ -65,7 +65,7 @@ def redo_pipeline(video: Path) -> bool:
         str(video), "--from-step", "5",
     ]
     log.info("$ %s", " ".join(shlex.quote(c) for c in cmd))
-    proc = subprocess.run(cmd, cwd=str(SHORTSMITH_ROOT), capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=str(SHORTSMITH_ROOT), capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         log.error("FAILED pipeline for %s\nstderr=%s", video.name, proc.stderr[-2000:])
         return False
@@ -81,12 +81,12 @@ def render_project(project_dir: Path) -> bool:
         "--output", str(project_dir / "renders" / "final.mp4"),
     )
     log.info("$ %s", " ".join(shlex.quote(c) for c in cmd))
-    proc = subprocess.run(cmd, cwd=str(KIT_ROOT), capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=str(KIT_ROOT), capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         log.warning("render exit=%d for %s; trying without --output", proc.returncode, project_dir.name)
         # Some hyperframes versions don't support --output; fall back.
         cmd2 = hyperframes_cmd("render", str(project_dir))
-        proc = subprocess.run(cmd2, cwd=str(KIT_ROOT), capture_output=True, text=True)
+        proc = subprocess.run(cmd2, cwd=str(KIT_ROOT), capture_output=True, text=True, encoding="utf-8")
         if proc.returncode != 0:
             log.error("FAILED render for %s\nstderr=%s", project_dir.name, proc.stderr[-1000:])
             return False

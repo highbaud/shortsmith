@@ -72,11 +72,13 @@ def apply_remotion(project_dir: Path, *, style: str = "xrp-revolution",
     # Up to date means: rendered from exactly these inputs (render_stamp). A
     # short rendered before stamps existed keeps the old rule, newer than its
     # base render, so an unscoped finalize does not rebuild the whole library
-    # unasked; --force rebuilds it.
+    # unasked; --force rebuilds it. A short whose stamp file is there but
+    # unreadable is NOT legacy: it was stamped once, so it re-renders rather
+    # than falling back to the weaker mtime rule.
     if not force and out_path.exists():
         prior = render_stamp.read_stamp(project_dir)
         current = stamp()
-        if prior is None:
+        if prior is None and not render_stamp.has_stamp(project_dir):
             if out_path.stat().st_mtime >= base.stat().st_mtime:
                 RUN_STATS["legacy_skipped"] += 1
                 print(f"  skip {project_dir.name}: rendered before render stamps existed "

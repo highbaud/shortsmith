@@ -120,8 +120,15 @@ def fix_words(words: list[dict]) -> list[dict]:
             merge = MERGES.get((low, ncore.lower()))
             if merge and (core[:1].isupper() or prev == merge[1]):
                 spelling = merge[0]
-                out.append({**word, "text": f"{pre}{spelling}{nsuf}",
-                            "end": nxt.get("end", word.get("end"))})
+                merged = {**word, "text": f"{pre}{spelling}{nsuf}"}
+                # The merged word runs to the second token's end. When neither
+                # token carries one (a transcript whose words were never
+                # aligned), leave the key absent rather than writing a null
+                # that every timing consumer would read as a number.
+                end = nxt.get("end", word.get("end"))
+                if end is not None:
+                    merged["end"] = end
+                out.append(merged)
                 prev = spelling.lower()
                 i += 2
                 continue

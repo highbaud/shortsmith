@@ -37,7 +37,8 @@ CODE_GLOBS = (
     "scripts/apply_remotion.py", "scripts/gen_broll.py",
     "scripts/person_photos.py", "scripts/brand_logos.py", "scripts/wikidata.py",
     "shortsmith/vfx.py", "shortsmith/layouts.py", "shortsmith/gallery.py",
-    "shortsmith/names.py", "templates/layouts/*.json",
+    "shortsmith/names.py", "shortsmith/sfx.py", "shortsmith/config.py",
+    "templates/layouts/*.json", "templates/styles/*/style.json",
     "remotion/src/*.ts", "remotion/src/*.tsx", "remotion/package.json",
 )
 
@@ -94,7 +95,10 @@ def _file_stat(path: Path) -> str:
         st = path.stat()
     except OSError:
         return ""
-    return f"{st.st_size}:{int(st.st_mtime)}"
+    # Nanoseconds, not int(st_mtime): whole-second mtimes let a same-size base
+    # render swapped inside one second read as unchanged, and a stamp that says
+    # "current" for a base it never saw ships a stale video.
+    return f"{st.st_size}:{st.st_mtime_ns}"
 
 
 def compute_stamp(project_dir: Path, *, base: Path, style: str, platform: str,
@@ -123,6 +127,17 @@ def compute_stamp(project_dir: Path, *, base: Path, style: str, platform: str,
 
 def stamp_path(project_dir: Path) -> Path:
     return Path(project_dir) / "renders" / STAMP_NAME
+
+
+def has_stamp(project_dir: Path) -> bool:
+    """True when a stamp file exists, readable or not.
+
+    read_stamp() cannot tell "never stamped" from "stamp unreadable", and the
+    two deserve opposite treatment: the first is a short that predates stamps,
+    the second is a short that was stamped and whose record we lost, which must
+    re-render rather than fall back to the mtime rule.
+    """
+    return stamp_path(project_dir).exists()
 
 
 def read_stamp(project_dir: Path) -> dict | None:
@@ -159,4 +174,9 @@ def is_current(project_dir: Path, current: dict, output: Path) -> bool:
     if not Path(output).exists():
         return False
     prior = read_stamp(project_dir)
-    return bool(prior) and prior.get("digest") == current.get("digest")
+    if not prior:
+        return False
+    # Version first: bumping STAMP_VERSION exists to force a re-render, so a
+    # matching digest under an older version must not read as current.
+    return (prior.get("version") == current.get("version")
+            and prior.get("digest") == current.get("digest"))

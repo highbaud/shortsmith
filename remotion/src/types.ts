@@ -148,15 +148,15 @@ export type ShortProps = {
    *  Empty / omitted = no VFX layer rendered. */
   vfxEvents?: VFXEvent[];
 
-  /** Optional ambient punch-in times (seconds). Each fires a gentle ~1.0->1.045
-   *  scale pulse on the base video to reset attention during long talking-head
-   *  stretches with no other motion. Planned in the free gaps between overlays,
-   *  b-roll, and VFX so it never competes with a hook/callout. Empty = off. */
   /** Caption type size in px. Defaults to 96. Lowered when the caption band is
    *  tight, a split-stack band is bracketed by a face above and below, so
    *  captions have to fit rather than overflow. */
   captionFontSize?: number;
 
+  /** Optional ambient punch-in times (seconds). Each fires a gentle ~1.0->1.045
+   *  scale pulse on the base video to reset attention during long talking-head
+   *  stretches with no other motion. Planned in the free gaps between overlays,
+   *  b-roll, and VFX so it never competes with a hook/callout. Empty = off. */
   ambientPunches?: number[];
 
   /** Speaker name chips for split-stack (two-up) shorts. The source's own Zoom

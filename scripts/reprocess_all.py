@@ -22,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT, VIDEO_DIR
+from shortsmith.config import AUTO_SHORTS_ROOT, HYPERFRAMES_SPEC, KIT_ROOT, VIDEO_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,7 +64,8 @@ def candidate_work_dirs(force: bool):
 
 def run_pipeline(video: Path) -> bool:
     cmd = ["uv", "run", "shortsmith", "run", str(video), "--from-step", "3"]
-    proc = subprocess.run(cmd, cwd=str(SHORTSMITH_ROOT), capture_output=True, text=True)
+    proc = subprocess.run(cmd, cwd=str(SHORTSMITH_ROOT), capture_output=True, text=True,
+                          encoding="utf-8")
     if proc.returncode != 0:
         log.error("FAIL pipeline %s\n%s", video.name, (proc.stderr or proc.stdout or "")[-1500:])
         return False
@@ -73,8 +74,9 @@ def run_pipeline(video: Path) -> bool:
 
 def render_project(project_dir: Path) -> bool:
     rel = project_dir.relative_to(KIT_ROOT)
-    cmd_str = f'npx hyperframes render "{rel.as_posix()}"'
-    proc = subprocess.run(cmd_str, cwd=str(KIT_ROOT), shell=True, capture_output=True, text=True)
+    cmd_str = f'npx {HYPERFRAMES_SPEC} render "{rel.as_posix()}"'
+    proc = subprocess.run(cmd_str, cwd=str(KIT_ROOT), shell=True, capture_output=True, text=True,
+                          encoding="utf-8")
     if proc.returncode != 0:
         log.error("FAIL render %s exit=%d %s", project_dir.name, proc.returncode, (proc.stderr or "")[-400:])
         return False
@@ -83,6 +85,12 @@ def render_project(project_dir: Path) -> bool:
 
 def main() -> int:
     force = "--force" in sys.argv
+    if not WORK_ROOT.is_dir():
+        log.error("No work dir yet: %s. Run the pipeline first.", WORK_ROOT)
+        return 1
+    if not VIDEO_DIR.is_dir():
+        log.error("Video dir not found: %s. Set SHORTSMITH_VIDEO_DIR.", VIDEO_DIR)
+        return 1
     todo = []
     for wd in candidate_work_dirs(force):
         v = source_for(wd)

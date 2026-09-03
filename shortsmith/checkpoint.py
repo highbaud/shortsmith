@@ -30,11 +30,17 @@ def load(work_dir: Path) -> dict:
         return {"steps": {}, "rendered": []}
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
-        data.setdefault("steps", {})
-        data.setdefault("rendered", [])
-        return data
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
+        # ValueError catches both a truncated JSON body and bytes that are not
+        # valid UTF-8, which is what a crash mid-write leaves behind.
         return {"steps": {}, "rendered": []}
+    if not isinstance(data, dict):
+        return {"steps": {}, "rendered": []}
+    if not isinstance(data.get("steps"), dict):
+        data["steps"] = {}
+    if not isinstance(data.get("rendered"), list):
+        data["rendered"] = []
+    return data
 
 
 def _save(work_dir: Path, data: dict) -> None:

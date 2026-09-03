@@ -104,6 +104,21 @@ def scaffold_all(
     return project_dirs
 
 
+def _load_clip_words(manifest: dict, rank: int) -> list[dict]:
+    """The clip's aligned word list, or [] when step 6 left none behind.
+
+    Resolved by hand rather than with `Path(manifest.get("words_path", ""))`:
+    `Path("")` is `Path(".")`, a directory passes `.exists()`, and reading it
+    raises instead of taking the missing-transcript branch. A manifest carries
+    no `words_path` whenever the run resumed past step 6.
+    """
+    ref = str(manifest.get("words_path") or "")
+    if ref and Path(ref).is_file():
+        return json.loads(Path(ref).read_text(encoding="utf-8"))
+    log.warning("Words JSON missing for clip %d; captions will be empty", rank)
+    return []
+
+
 def _scaffold_one(
     env: Environment,
     manifest: dict,
@@ -134,12 +149,7 @@ def _scaffold_one(
     duration = _probe_duration(clip_dst)
 
     # Load the clip's word-level transcript (from step 6: retranscribe)
-    words_src = Path(manifest.get("words_path", ""))
-    if words_src.exists():
-        words = json.loads(words_src.read_text(encoding="utf-8"))
-    else:
-        log.warning("Words JSON missing for clip %d; captions will be empty", rank)
-        words = []
+    words = _load_clip_words(manifest, rank)
 
     # Save the clip's transcript alongside (handy for downstream edits)
     (project_dir / "assets" / "words.json").write_text(
@@ -359,7 +369,7 @@ def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) ->
         if color not in VALID_COLORS:
             color = "gold"
 
-        accent = [w.strip() for w in (co.get("accent") or []) if str(w).strip()]
+        accent = [str(w).strip() for w in (co.get("accent") or []) if str(w).strip()]
         html = _render_text(raw_text, accent, color, style)
         subline_html = ""
         if co.get("subline"):
@@ -393,7 +403,16 @@ def _build_hook(clip: dict, clip_duration: float) -> dict | None:
     Returns the render-ready dict (with `html` pre-rendered) or None if no hook.
     """
     raw = clip.get("hook")
-    if not raw or not str(raw.get("text", "")).strip():
+    if not raw:
+        return None
+    # clips.json is authored by an LLM (or by hand, when --from-step 3 skips
+    # the normalizer), so a hook can arrive as a bare string or with a null
+    # duration. One malformed hook must not throw away every scaffolded
+    # project in the batch.
+    if not isinstance(raw, dict):
+        log.warning("Hook is not a {text, color, duration} object (%r); skipping it", raw)
+        return None
+    if not str(raw.get("text", "")).strip():
         return None
 
     color = (raw.get("color") or "red").lower()
@@ -404,11 +423,16 @@ def _build_hook(clip: dict, clip_duration: float) -> dict | None:
     if color not in ("red", "gold", "green"):
         color = "red"
 
-    duration = float(raw.get("duration", 2.6))
+    try:
+        duration = float(raw.get("duration", 2.6))
+    except (TypeError, ValueError):
+        log.warning("Hook duration %r is not a number; using the 2.6s default",
+                    raw.get("duration"))
+        duration = 2.6
     # Clamp: at least 1.5s for legibility, no more than 30% of clip
     duration = max(1.5, min(duration, max(2.0, clip_duration * 0.30)))
 
-    accent = [w.strip() for w in (raw.get("accent") or []) if str(w).strip()]
+    accent = [str(w).strip() for w in (raw.get("accent") or []) if str(w).strip()]
     # Hook uses the "slam" style — uppercase like a punch
     html = _render_text(str(raw["text"]), accent, color, style="slam")
 
@@ -487,7 +511,7 @@ def _probe_duration(path: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     return float(out.stdout.strip())
 

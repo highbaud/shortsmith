@@ -162,6 +162,7 @@ def _run_clearvoice_batch(jobs: list[tuple[Path, Path]], log_prefix: str = "cv")
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
     )
     stdout, stderr = proc.communicate(input=payload, timeout=3600)
 

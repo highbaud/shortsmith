@@ -187,6 +187,20 @@ def _normalize_callouts(raw: list) -> list[dict]:
     return out
 
 
+def _as_rank(value: object, fallback: int) -> int:
+    """A model-supplied rank, coerced to an int.
+
+    Rank only breaks ties in the sort below and is reassigned straight after it,
+    so it is never worth dropping a clip over. Left uncoerced, one string rank
+    from the model made `sort` compare str to int and raise, outside the per-clip
+    try, which lost every clip in the batch rather than the one bad field.
+    """
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return fallback
+
+
 def normalize_clips(clips: list[dict], words: list[dict]) -> list[dict]:
     """Validate, deduplicate, normalize structure. Drop invalid clips."""
     max_t = float(words[-1]["end"]) if words else 0.0
@@ -222,7 +236,7 @@ def normalize_clips(clips: list[dict], words: list[dict]) -> list[dict]:
             slug = slugify(str(slug_text))[:40] or f"clip-{i+1}"
 
             out.append({
-                "rank": c.get("rank", i + 1),
+                "rank": _as_rank(c.get("rank"), i + 1),
                 "start": start,
                 "end": end,
                 "hook_start": float(c.get("hook_start", start)),

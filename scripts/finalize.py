@@ -47,10 +47,36 @@ def probe_duration(p: Path) -> float:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", str(p)],
-            check=True, capture_output=True, text=True)
+            check=True, capture_output=True, text=True, encoding="utf-8")
         return float(out.stdout.strip())
-    except Exception:
+    except Exception as e:  # noqa: BLE001 - a duration we cannot read is not fatal
+        # Say so: 0.0 silently shortens every SFX plan built on it, and a
+        # missing ffprobe would otherwise ship a whole batch of cue-less finals.
+        log.warning("  ffprobe could not read a duration for %s (%s); using 0.0",
+                    p.name, e)
         return 0.0
+
+
+def best_render(proj: Path) -> Path | None:
+    """The best non-SFX render for one short, or None if it has none.
+
+    Prefers the Remotion output (captions + b-roll) so whatever consumes it
+    carries everything; falls back to the raw newest render, project-level or
+    kit-level.
+    """
+    remotion = proj / "renders" / "final_remotion.mp4"
+    if remotion.exists():
+        return remotion
+    cands: list[Path] = []
+    rdir = proj / "renders"
+    if rdir.is_dir():
+        cands += [p for p in rdir.glob("*.mp4")
+                  if p.stem != "final_sfx" and not p.stem.startswith("_")]
+    if KIT_RENDERS.is_dir():
+        cands += list(KIT_RENDERS.glob(f"{proj.name}_*.mp4"))
+    if not cands:
+        return None
+    return max(cands, key=lambda p: p.stat().st_mtime)
 
 
 def find_render(work_slug: str, rank: int) -> tuple[Path, Path] | None:
@@ -58,20 +84,9 @@ def find_render(work_slug: str, rank: int) -> tuple[Path, Path] | None:
     if not src_dir.exists():
         return None
     for proj in src_dir.glob(f"short-{rank:02d}-*"):
-        # Prefer the Remotion output (captions + b-roll) as the SFX base so the
-        # final carries everything; fall back to the raw newest render.
-        remotion = proj / "renders" / "final_remotion.mp4"
-        if remotion.exists():
-            return proj, remotion
-        cands: list[Path] = []
-        rdir = proj / "renders"
-        if rdir.is_dir():
-            cands += [p for p in rdir.glob("*.mp4")
-                      if p.stem != "final_sfx" and not p.stem.startswith("_")]
-        if KIT_RENDERS.is_dir():
-            cands += list(KIT_RENDERS.glob(f"{proj.name}_*.mp4"))
-        if cands:
-            return proj, max(cands, key=lambda p: p.stat().st_mtime)
+        found = best_render(proj)
+        if found:
+            return proj, found
     return None
 
 
@@ -218,7 +233,7 @@ def _qa_streams(p: Path) -> tuple[bool, int, int]:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries",
              "stream=codec_type,width,height", "-of", "json", str(p)],
-            check=True, capture_output=True, text=True)
+            check=True, capture_output=True, text=True, encoding="utf-8")
         streams = json.loads(out.stdout).get("streams", [])
         has_audio = any(s.get("codec_type") == "audio" for s in streams)
         vid = next((s for s in streams if s.get("codec_type") == "video"), {})
@@ -227,7 +242,15 @@ def _qa_streams(p: Path) -> tuple[bool, int, int]:
         return False, 0, 0
 
 
-def phase2_consolidate(slugs: set[str] | None = None) -> int:
+def phase2_consolidate(slugs: set[str] | None = None,
+                       allow_unmixed: bool = False) -> int:
+    """Copy every deliverable into _all/.
+
+    `allow_unmixed` is what --skip-sfx promises: with no SFX phase there is no
+    final_sfx.mp4 to find, so consolidate the best render the short does have
+    (final_remotion.mp4, else its newest base render). Without it a --skip-sfx
+    run consolidated nothing and still reported success.
+    """
     ALL_DIR.mkdir(parents=True, exist_ok=True)
     copied = bad = 0
     for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
@@ -240,7 +263,14 @@ def phase2_consolidate(slugs: set[str] | None = None) -> int:
                 continue
             sfx_mp4 = proj / "renders" / "final_sfx.mp4"
             if not sfx_mp4.exists():
-                continue
+                if not allow_unmixed:
+                    continue
+                fallback = best_render(proj)
+                if fallback is None:
+                    continue
+                log.info("  %s: no final_sfx.mp4; consolidating %s",
+                         proj.name, fallback.name)
+                sfx_mp4 = fallback
             base = f"{src_dir.name}__{proj.name}"
             # QA: a deliverable must have audio and be a 1080x1920 vertical video.
             has_audio, w, h = _qa_streams(sfx_mp4)
@@ -321,7 +351,7 @@ def main() -> int:
     else:
         phase1_sfx(cfg, sfx_map, slugs=slugs)
 
-    n = phase2_consolidate(slugs=slugs)
+    n = phase2_consolidate(slugs=slugs, allow_unmixed=args.skip_sfx)
     log.info("FINALIZE COMPLETE. %d shorts consolidated to %s", n, ALL_DIR)
     return 0
 

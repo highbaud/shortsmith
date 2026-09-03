@@ -76,11 +76,21 @@ def current_claim_values(entity: dict, prop: str) -> list[str]:
 
 def get_entities(fetch: Fetch, qids: list[str],
                  props: str = "claims%7Cdescriptions%7Clabels") -> dict[str, dict]:
+    """Batch-load entities. Ids the API has no item for are simply absent.
+
+    A deleted or never-allocated id comes back as a `{"id": ..., "missing": ""}`
+    stub rather than an absent key, and that stub is truthy. Callers that pin a
+    QID test `if entity:` and fall through to search when it fails to load, so
+    passing the stub on turns a dead pin into a resolved entity with no claims
+    and the fall-through never runs.
+    """
     if not qids:
         return {}
     ids = "%7C".join(qids[:50])  # the API caps a batch at 50
-    return api_json(fetch, f"{WIKIDATA_API}?action=wbgetentities&ids={ids}"
-                           f"&props={props}&languages=en&format=json").get("entities") or {}
+    entities = api_json(fetch, f"{WIKIDATA_API}?action=wbgetentities&ids={ids}"
+                               f"&props={props}&languages=en&format=json").get("entities") or {}
+    return {qid: entity for qid, entity in entities.items()
+            if isinstance(entity, dict) and "missing" not in entity}
 
 
 def search_entity_ids(fetch: Fetch, name: str, limit: int = 10) -> list[str]:

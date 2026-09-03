@@ -88,11 +88,31 @@ def reframe_all(
                 reframe_one(src, out, cfg)
             m["vertical_path"] = str(out)
         except Exception as e:
-            log.warning("Reframe failed for clip %d (%s); using center crop", rank, e)
-            _ffmpeg_center_crop(src, out)
+            log.warning("Reframe failed for clip %d (%s); using center crop",
+                        rank, _ffmpeg_reason(e))
+            try:
+                _ffmpeg_center_crop(src, out)
+            except Exception as e2:  # noqa: BLE001
+                # The center crop is the last resort, so a failure here is this
+                # clip's failure, not the batch's: leave vertical_path unset and
+                # let step 8 ship the 16:9 cut rather than abandoning every
+                # clip that comes after this one.
+                log.error("Center-crop fallback also failed for clip %d (%s); "
+                          "shipping the un-reframed clip", rank, _ffmpeg_reason(e2))
+                continue
             m["vertical_path"] = str(out)
 
     return clip_manifests
+
+
+def _ffmpeg_reason(e: Exception) -> str:
+    """A failed ffmpeg call carries its diagnosis in captured stderr, which
+    `str(CalledProcessError)` drops. Without it every reframe failure logs the
+    same unusable "returned non-zero exit status" line."""
+    if isinstance(e, subprocess.CalledProcessError) and e.stderr:
+        err = e.stderr.decode("utf-8", "replace") if isinstance(e.stderr, bytes) else e.stderr
+        return f"{e}: {err.strip()[-400:]}"
+    return str(e)
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +316,7 @@ def _detect_cuts(src_video: Path, cfg: Config) -> list[float]:
         ["ffmpeg", "-i", str(src_video),
          "-filter:v", f"select='gt(scene,{thr})',showinfo",
          "-f", "null", "-"],
-        capture_output=True, text=True, errors="replace",
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     # showinfo writes to stderr.
     cuts = sorted({float(m) for m in _SHOWINFO_PTS.findall(proc.stderr)})
@@ -329,7 +349,7 @@ def _probe_duration(src_video: Path) -> float:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(src_video)],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, encoding="utf-8",
     )
     return float(out.stdout.strip())
 
