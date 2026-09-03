@@ -141,6 +141,7 @@ class Identity:
     commons_category: str | None = None  # P373
     score: int = 0
     pinned: bool = False
+    sitelinks: int = 0
 
     def summary(self) -> str:
         bits = [f"{self.qid} {self.label}"]
@@ -148,6 +149,8 @@ class Identity:
             bits.append(f"({self.description})")
         if self.employers:
             bits.append(f"[{', '.join(self.employers)}]")
+        if not self.pinned:
+            bits.append(f"<{self.sitelinks} sitelinks>")
         return " ".join(bits)
 
 
@@ -181,6 +184,7 @@ def _build_identity(fetch: Fetch, qid: str, entity: dict, *, score: int,
         commons_category=p373[0] if p373 else None,
         score=score,
         pinned=pinned,
+        sitelinks=wikidata.sitelinks_count(entity),
     )
 
 
@@ -197,17 +201,26 @@ def _hint_tokens(role_hint: str) -> list[str]:
     return [t for t in tokens if len(t) > 2 and t not in generic]
 
 
+# Notability from Wikimedia coverage: +1 per NOTABILITY_DIVISOR sitelinks, capped
+# at +10. An unhinted human needs MIN_SITELINKS to resolve at all; the exact
+# label match that once picked a substitute teacher over Michael Saylor is now
+# worth a single point.
+NOTABILITY_DIVISOR = 5
+MIN_SITELINKS = 5
+
+
 def _score_entity(entity: dict, name: str, hint_tokens: list[str],
-                  blob: str) -> int:
-    score = 0
-    for token in hint_tokens:
-        if token in blob:
-            score += 3
+                  blob: str) -> tuple[int, bool]:
+    """(score, eligible). Eligible means the role hint matched or the entity is
+    notable enough (MIN_SITELINKS) to be the person a video would mention."""
+    hint_hits = sum(1 for token in hint_tokens if token in blob)
+    links = wikidata.sitelinks_count(entity)
+    score = 3 * hint_hits + min(links, 50) // NOTABILITY_DIVISOR
     if wikidata.label_of(entity).lower() == name.lower():
-        score += 2
+        score += 1
     if _claim_values(entity, "P18"):
         score += 1  # having a designated portrait correlates with being the notable one
-    return score
+    return score, (hint_hits > 0 or links >= MIN_SITELINKS)
 
 
 def resolve_identity(fetch: Fetch, name: str, role_hint: str = "") -> Identity | None:
@@ -232,7 +245,7 @@ def resolve_identity(fetch: Fetch, name: str, role_hint: str = "") -> Identity |
         return None
 
     hint_tokens = _hint_tokens(role_hint)
-    entities = _get_entities(fetch, hits)
+    entities = _get_entities(fetch, hits, "claims%7Cdescriptions%7Clabels%7Csitelinks")
     best: Identity | None = None
     for qid in hits:  # preserve search relevance order for ties
         entity = entities.get(qid)
@@ -241,7 +254,9 @@ def resolve_identity(fetch: Fetch, name: str, role_hint: str = "") -> Identity |
         identity = _build_identity(fetch, qid, entity, score=0, pinned=False)
         blob = " ".join((identity.description, *identity.occupations,
                          *identity.employers)).lower()
-        score = _score_entity(entity, name, hint_tokens, blob)
+        score, eligible = _score_entity(entity, name, hint_tokens, blob)
+        if not eligible:
+            continue
         identity = replace(identity, score=score)
         if best is None or score > best.score:
             best = identity

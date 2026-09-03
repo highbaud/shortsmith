@@ -14,6 +14,7 @@ import {
   LogoSlide,
   Palette,
   PersonSlide,
+  BadgeAnchor,
   StatSlide,
   TextSlide,
 } from "./types";
@@ -263,7 +264,11 @@ const LogoMark: React.FC<{
 /** Compact rounded card that pops into the upper area over the live base video.
  *  Stays clear of the caption band (0.6–0.8 height) and only plays inside free
  *  gaps, so no Hyperframes overlay is on screen to collide with. */
-const LogoBadge: React.FC<{ slide: LogoSlide; dur: number }> = ({ slide, dur }) => {
+const LogoBadge: React.FC<{ slide: LogoSlide; dur: number; anchor?: BadgeAnchor }> = ({
+  slide,
+  dur,
+  anchor,
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const color = slide.color ?? "#ffffff";
@@ -274,6 +279,36 @@ const LogoBadge: React.FC<{ slide: LogoSlide; dur: number }> = ({ slide, dur }) 
     extrapolateRight: "clamp",
   });
   const enter = interpolate(pop, [0, 1], [0, 1]);
+
+  if (anchor) {
+    // Split-stack: a mark-only tile beside the top speaker's square. There is
+    // no room for the name there; the captions carry it.
+    return (
+      <div
+        style={{
+          position: "absolute",
+          left: anchor.x,
+          top: anchor.y,
+          width: anchor.size,
+          height: anchor.size,
+          padding: 6,
+          boxSizing: "border-box",
+          borderRadius: anchor.size * 0.22,
+          background: "rgba(10,18,28,0.82)",
+          border: `2px solid ${color}`,
+          boxShadow: "0 18px 50px rgba(0,0,0,0.5)",
+          opacity: Math.min(enter, outFade),
+          transform: `translateY(${interpolate(pop, [0, 1], [-30, 0])}px) scale(${interpolate(
+            pop,
+            [0, 1],
+            [0.8, 1]
+          )})`,
+        }}
+      >
+        <LogoMark src={src} monochrome={slide.monochrome} color={color} size={anchor.size - 16} />
+      </div>
+    );
+  }
 
   return (
     <AbsoluteFill style={{ justifyContent: "flex-start", alignItems: "center" }}>
@@ -322,7 +357,11 @@ const LogoBadge: React.FC<{ slide: LogoSlide; dur: number }> = ({ slide, dur }) 
   );
 };
 
-const LogoCard: React.FC<{ slide: LogoSlide; dur: number }> = ({ slide, dur }) => {
+const LogoCard: React.FC<{ slide: LogoSlide; dur: number; anchor?: BadgeAnchor }> = ({
+  slide,
+  dur,
+  anchor,
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const color = slide.color ?? "#ffffff";
@@ -330,7 +369,7 @@ const LogoCard: React.FC<{ slide: LogoSlide; dur: number }> = ({ slide, dur }) =
   const src = staticFile(slide.src);
 
   if (slide.mode === "badge") {
-    return <LogoBadge slide={slide} dur={dur} />;
+    return <LogoBadge slide={slide} dur={dur} anchor={anchor} />;
   }
 
   const mark = (
@@ -476,7 +515,9 @@ export const BRoll: React.FC<{
   slide: BRollSlide;
   durationInFrames: number;
   palette: Palette;
-}> = ({ slide, durationInFrames, palette }) => {
+  /** Split-stack only: where a logo badge goes. */
+  badgeAnchor?: BadgeAnchor;
+}> = ({ slide, durationInFrames, palette, badgeAnchor }) => {
   const withColor = {
     ...slide,
     color: slide.color ?? paletteColorFor(slide.type, palette),
@@ -489,7 +530,7 @@ export const BRoll: React.FC<{
     case "list":
       return <ListCard slide={withColor} dur={durationInFrames} />;
     case "logo":
-      return <LogoCard slide={withColor} dur={durationInFrames} />;
+      return <LogoCard slide={withColor} dur={durationInFrames} anchor={badgeAnchor} />;
     case "person":
       return <PersonCard slide={withColor} dur={durationInFrames} />;
   }

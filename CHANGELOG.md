@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 ## [0.6.0] — Unreleased
 
 ### Changed
+- **Split-stack shorts get their b-roll back.** They lost all of it when the
+  layout landed, because the logo badge's upper-center spot is the top
+  speaker's face. The badge now sits as a mark-only tile on the blurred
+  backdrop beside the top square (`render_remotion._logo_badge_anchor`, passed
+  to Remotion as `logoBadgeAnchor`), below every platform's top bar and outside
+  both squares and the caption band. Full-frame cutaways play as on any other
+  short. A preset with no backdrop beside the squares drops the badges only.
+- **Nobody on camera gets a cutaway.** `gen_broll` drops a person slide for
+  anyone in the clip spec's `speakers` list, matched on the full name or the
+  surname.
+- **Unpinned names rank by notability.** `person_photos.resolve_identity` asks
+  Wikidata for sitelinks and scores +1 per five (capped at +10); an exact label
+  match is worth one point, down from two. A human with fewer than five
+  sitelinks resolves only when the role hint matched. This is what stops
+  "Michael Saylor" resolving to a substitute teacher whose label is exact.
+- **Failures are loud.** A split-stack clip whose layout preset cannot load
+  raises `LayoutPresetError` instead of silently falling back to face-aware
+  caption placement (which on a stacked frame means captions on a face).
+  A b-roll generation failure is printed with a `!!` prefix and counted in
+  finalize's Phase 0 summary instead of vanishing in the scroll.
+- `scripts/calibrate.py` gained its first tests (analytics normalization, the
+  ledger join, the emitted calibration files) and uses timezone-aware UTC.
+- **Person detection hears surnames and mishearings.** Across 382 shorts, 53
+  transcripts mentioned a curated person and the full-name match fired in 28
+  ("Trump comes out with that", "Sailor lost $6 billion", "CZ said" got no
+  cutaway). Each person now carries surname aliases (`PERSON_ALIASES`) where
+  nothing else in finance talk shares the word, plus ASR variants
+  (`ASR_VARIANTS`: "Sailor", "Larson") that count only when capitalized
+  mid-sentence or preceded by the first name. Common-word surnames (Wood, Fink,
+  Powell, Armstrong, Huang, Schwartz) stay full-name only, a surname after
+  someone else's first name ("Barron Trump") is not a match, and possessives no
+  longer hide a mention ("Gensler's"). Brand mentions get the same possessive
+  handling, so "Ripple's" now times its logo badge instead of dropping it.
 - **Remotion 4.0.468 → 4.0.499, and `<OffthreadVideo>` → `@remotion/media`.**
   `@remotion/media` became stable and recommended in 4.0.491; its `<Video>` is
   the successor to core's `<OffthreadVideo>` and skips the per-frame headless
@@ -23,6 +56,19 @@ All notable changes to this project will be documented in this file.
   `scripts/wikidata.py`.
 
 ### Fixed
+- **Person cutaways from before identity verification were still being
+  delivered.** The verification fix changed how a photo is fetched, but every
+  short generated earlier kept its keyword-search `assets/broll/person-*.jpg`
+  and a `broll.auto.json` pointing at it, and `render_remotion` trusted that
+  `src`. `finalize.py` then re-used those Remotion renders (its up-to-date
+  check compares mtimes against the base render, so a resolver fix never
+  invalidated them) and copied them to `_all/` on July 31: "David Schwartz"
+  was a photo of Anna Schwartz, "Michael Burry" was a coastal landscape. Now
+  `_merge_broll` passes every auto person slide through the new
+  `gen_broll.verify_person_slides()`, which re-resolves the name (cache first,
+  Wikidata otherwise), rewrites `src` to the verified file, and drops a person
+  with no verified photo. Hand-authored `broll.json` slides pass through as
+  written. The three delivered shorts were re-rendered.
 - **Logo b-roll slides were missing for 12 of 41 curated brands**, including
   BlackRock and JPMorgan, two of the most-mentioned institutions in this
   channel's content. Simple Icons covers 27 of the 41 and vectorlogo.zone
@@ -86,6 +132,34 @@ All notable changes to this project will be documented in this file.
   for people (broad keyword match, drifts to the wrong subject).
 
 ### Added
+- **Names are spelled right in captions.** New `shortsmith/names.py` holds a
+  glossary of the people and terms this channel says (Saylor, Garlinghouse,
+  Gensler, Deaton, XRPL, RLUSD...) and the mishearings Whisper produces for
+  them. The glossary is handed to faster-whisper as `initial_prompt`
+  (`Config.whisper_initial_prompt`, env `SHORTSMITH_WHISPER_PROMPT`) and to the
+  WhisperX worker as `WHISPERX_INITIAL_PROMPT`; `names.fix_words` then respells
+  what survives ("Sailor" -> Saylor, "Larson" -> Larsen, "Garling house" ->
+  Garlinghouse, "xrpl" -> XRPL), at transcription and again after alignment.
+  A mishearing that is a real word is corrected only when capitalized or
+  preceded by the first name. Across the 382 existing transcripts it would
+  change six tokens, all of them right.
+- **Render stamps.** New `scripts/render_stamp.py`. `apply_remotion` used to
+  compare one pair of file dates (the Remotion output against the Hyperframes
+  base), so a resolver fix, a caption change or a new photo never re-rendered
+  anything. Each render now writes a digest of every input beside itself and
+  is skipped only when the digest still matches; a mismatch re-renders and
+  says which inputs changed. Shorts rendered before stamps existed keep the
+  old rule until `--force-remotion`, so an unscoped finalize does not rebuild
+  the library unasked, and the phase summary counts them.
+- **Provenance beside manual photos.** A `<slug>.json` next to
+  `assets/people/manual/<slug>.jpg` (`source_url`, `image_url`, `license`,
+  `added`) is copied into `people.json` and shown by `--audit-people`.
+- **Operator-supplied person photos.** `assets/people/manual/<slug>.<jpg|png|webp>`
+  is checked before the cache and before Wikidata, so a person with no free
+  portrait (Michael Burry, Jed McCaleb, David Schwartz) can still get a cutaway
+  from a photo you provide, and it wins even against `--fresh-photo`.
+  `--audit-people` lists such a person as `[manual]`; the manifest records the
+  file. Nothing checks the license.
 - **Token-paste guardrail (pre-commit hooks).** `setup.sh` / `setup.ps1` now
   install `pre-commit` + Yelp's `detect-secrets` + a custom
   `scripts/check_no_tokens.py` scanner that catches Metricool OAuth client

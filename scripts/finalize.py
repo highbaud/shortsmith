@@ -129,6 +129,7 @@ def phase0_remotion(style: str, force: bool = False,
         log.error("Cannot import apply_remotion (%s); skipping Remotion phase", e)
         return 0
     _clear_remotion_cache()  # once per run, before the first render bundles
+    ar.reset_stats()
     applied = skipped = 0
     for src_dir in sorted(AUTO_SHORTS_ROOT.iterdir()):
         if not src_dir.is_dir():
@@ -149,8 +150,17 @@ def phase0_remotion(style: str, force: bool = False,
                     log.info("  Remotion applied to %d shorts so far...", applied)
             else:
                 skipped += 1
-    log.info("Phase 0 done: Remotion applied/up-to-date=%d, skipped(no base)=%d",
-             applied, skipped)
+    stats = ar.RUN_STATS
+    log.info("Phase 0 done: rendered=%d current=%d legacy(untouched)=%d skipped(no base)=%d "
+             "b-roll failures=%d", stats["rendered"], stats["current"],
+             stats["legacy_skipped"], skipped, stats["broll_failures"])
+    if stats["legacy_skipped"]:
+        log.info("  %d short(s) predate render stamps and were left as they are; "
+                 "pass --force-remotion to rebuild them with the current code.",
+                 stats["legacy_skipped"])
+    if stats["broll_failures"]:
+        log.warning("  %d short(s) rendered with a stale or empty b-roll list because "
+                    "generation failed; see the '!!' lines above.", stats["broll_failures"])
     return applied
 
 

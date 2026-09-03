@@ -99,9 +99,18 @@ def transcribe_only(video: Path) -> None:
               help="Reframe multicam/two-speaker footage by detecting camera cuts and "
                    "framing each shot's speaker independently. Default off (single static "
                    "crop). Per-clip clips.json \"multicam\": true overrides this.")
+@click.option("--layout", type=click.Choice(["static", "split-stack", "auto"]), default=None,
+              help="Reframe layout. static=one crop (default). split-stack=gallery "
+                   "sources with BOTH speakers on screen, cropped to squares and "
+                   "stacked with captions in the gap. auto=split-stack when a "
+                   "two-up gallery is detected. Per-clip clips.json \"layout\" wins.")
+@click.option("--layout-preset", type=str, default=None,
+              help="Saved layout preset for --layout split-stack "
+                   "(templates/layouts/<name>.json). Default: two-speaker-stack.")
 def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         engine: str | None, min_score: int | None, style: str | None,
-        clip_engine: str | None, cut_aware: bool | None) -> None:
+        clip_engine: str | None, cut_aware: bool | None, layout: str | None,
+        layout_preset: str | None) -> None:
     """Run the full pipeline on a single source video."""
     _setup_logging()
 
@@ -120,6 +129,10 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         cfg.clip_engine = clip_engine
     if cut_aware is not None:
         cfg.reframe_cut_aware = cut_aware
+    if layout:
+        cfg.reframe_layout = layout
+    if layout_preset:
+        cfg.split_stack_preset = layout_preset
 
     problems = cfg.validate()
     # Filter problems by what the upcoming steps actually need.

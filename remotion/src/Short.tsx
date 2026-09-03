@@ -16,7 +16,7 @@ import { Video } from "@remotion/media";
 import { loadFont } from "@remotion/google-fonts/Anton";
 import { BRoll } from "./BRoll";
 import { Flash, Glare, useZoomPunchScale } from "./VFX";
-import { CaptionBand, Palette, ShortProps, TimeWindow, Word } from "./types";
+import { CaptionBand, Palette, PanelRect, ShortProps, SpeakerLabel, TimeWindow, Word } from "./types";
 
 // Anton: heavy condensed display face, matches the Hyperframes hook/callouts.
 // waitUntilDone() resolves once the webfont is actually parsed/ready — we block
@@ -61,7 +61,8 @@ const Captions: React.FC<{
   yieldWindows: TimeWindow[];
   fade: number;
   palette: Palette;
-}> = ({ words, maxWords, band, yieldWindows, fade, palette }) => {
+  fontSize: number;
+}> = ({ words, maxWords, band, yieldWindows, fade, palette, fontSize }) => {
   const frame = useCurrentFrame();
   const { fps, height } = useVideoConfig();
   const t = frame / fps;
@@ -102,6 +103,10 @@ const Captions: React.FC<{
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          // Hard guarantee for the split-stack layout: the band is bracketed by
+          // a face above AND below, so a caption that grew an unexpected extra
+          // line would land on someone's chin. Clip instead.
+          overflow: "hidden",
         }}
       >
         <div
@@ -144,7 +149,7 @@ const Captions: React.FC<{
                   marginBottom: 8,
                   fontFamily: ANTON,
                   fontWeight: 400, // Anton is single-weight
-                  fontSize: 96,
+                  fontSize,
                   lineHeight: 1.05,
                   color,
                   transform: `scale(${pop})`,
@@ -172,6 +177,77 @@ const Captions: React.FC<{
         </div>
       </div>
     </AbsoluteFill>
+  );
+};
+
+/** Name chips for the split-stack layout, drawn INSIDE each speaker square.
+ *
+ *  Panel rectangles come from the layout preset. They used to be inferred from
+ *  the caption band, which only held while the panels ran edge to edge, once
+ *  the layout gained safe-area margins that inference put the lower chip well
+ *  inside the speaker's face.
+ *
+ *  Chips hug the band-facing edge of their own panel and are left-aligned,
+ *  while captions are centered in the band, so the two never collide.
+ */
+const SpeakerLabels: React.FC<{
+  labels: SpeakerLabel[];
+  band: CaptionBand;
+  panels: PanelRect[];
+  palette: Palette;
+}> = ({ labels, band, panels, palette }) => {
+  const { width, height } = useVideoConfig();
+  const inset = 22;
+  // Fall back to the band-derived geometry only when no panels were supplied
+  // (an older clip spec); correct for a zero-margin layout.
+  const fallbackH = band.top * height;
+  const fallback: PanelRect[] = [
+    { x: Math.max(0, (width - fallbackH) / 2), y: 0, w: fallbackH, h: fallbackH },
+    {
+      x: Math.max(0, (width - fallbackH) / 2),
+      y: height - fallbackH,
+      w: fallbackH,
+      h: fallbackH,
+    },
+  ];
+
+  return (
+    <>
+      {labels.map((label, i) => {
+        const isTop = label.position === "top";
+        const panel = (panels.length >= 2 ? panels : fallback)[isTop ? 0 : 1];
+        const style: React.CSSProperties = isTop
+          ? { top: panel.y + panel.h - inset, transform: "translateY(-100%)" }
+          : { top: panel.y + inset };
+        return (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              left: panel.x + inset,
+              ...style,
+              paddingLeft: 20,
+              paddingRight: 20,
+              paddingTop: 8,
+              paddingBottom: 8,
+              borderRadius: 8,
+              backgroundColor: "rgba(0,0,0,0.62)",
+              borderLeft: `4px solid ${palette.primary}`,
+              fontFamily: ANTON,
+              fontWeight: 400,
+              fontSize: 34,
+              lineHeight: 1,
+              letterSpacing: 1.2,
+              textTransform: "uppercase",
+              color: "#ffffff",
+              textShadow: "0 2px 8px rgba(0,0,0,0.8)",
+            }}
+          >
+            {label.name}
+          </div>
+        );
+      })}
+    </>
   );
 };
 
@@ -215,6 +291,9 @@ const ShortInner: React.FC<ShortProps> = (props) => {
     palette,
     vfxEvents = [],
     ambientPunches = [],
+    speakerLabels = [],
+    speakerPanels = [],
+    logoBadgeAnchor,
   } = props;
   const frame = useCurrentFrame();
   // Captions yield during full-frame b-roll cutaways (a slide that covers the
@@ -262,7 +341,13 @@ const ShortInner: React.FC<ShortProps> = (props) => {
           yieldWindows={yieldWindows}
           fade={captionFadeSeconds}
           palette={palette}
+          fontSize={props.captionFontSize ?? 96}
         />
+      ) : null}
+
+      {speakerLabels.length > 0 ? (
+        <SpeakerLabels labels={speakerLabels} band={captionBand}
+                       panels={speakerPanels} palette={palette} />
       ) : null}
 
       {broll.map((slide, i) => {
@@ -270,7 +355,8 @@ const ShortInner: React.FC<ShortProps> = (props) => {
         const durationInFrames = Math.max(1, Math.round((slide.end - slide.start) * fps));
         return (
           <Sequence key={i} from={from} durationInFrames={durationInFrames}>
-            <BRoll slide={slide} durationInFrames={durationInFrames} palette={palette} />
+            <BRoll slide={slide} durationInFrames={durationInFrames} palette={palette}
+                   badgeAnchor={logoBadgeAnchor} />
           </Sequence>
         );
       })}

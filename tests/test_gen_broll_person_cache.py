@@ -17,7 +17,53 @@ import gen_broll  # noqa: E402
 @pytest.fixture
 def people_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(gen_broll, "PEOPLE_DIR", tmp_path)
+    monkeypatch.setattr(gen_broll, "PEOPLE_MANIFEST", tmp_path / "people.json")
+    monkeypatch.setattr(gen_broll, "MANUAL_DIR", tmp_path / "manual")
     return tmp_path
+
+
+def _never_resolve(*args, **kwargs):
+    raise AssertionError("Wikidata must not be consulted when a manual photo exists")
+
+
+def test_manual_photo_beats_wikidata_and_the_cache(
+    people_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An operator-supplied file is the last word: no cache lookup, no network,
+    and --fresh-photo cannot re-pick past it."""
+    (people_dir / "davidschwartz.jpg").write_bytes(b"cached-from-wikidata")
+    manual = people_dir / "manual"
+    manual.mkdir()
+    (manual / "davidschwartz.jpg").write_bytes(b"operator-choice")
+    monkeypatch.setattr(gen_broll.person_photos, "resolve_photo_candidates", _never_resolve)
+    out_dir = tmp_path / "short" / "assets" / "broll"
+    out_dir.mkdir(parents=True)
+
+    for fresh in (False, True):
+        src = gen_broll._download_person("David Schwartz", out_dir, fresh=fresh)
+        assert src == "assets/broll/person-davidschwartz.jpg"
+        assert (out_dir / "person-davidschwartz.jpg").read_bytes() == b"operator-choice"
+    assert gen_broll._read_manifest()["David Schwartz"] == {
+        "origin": "manual", "file": "manual/davidschwartz.jpg"}
+
+
+def test_manual_photo_keeps_its_own_format(people_dir: Path, tmp_path: Path) -> None:
+    manual = people_dir / "manual"
+    manual.mkdir()
+    (manual / "jedmccaleb.png").write_bytes(b"png-bytes")
+    out_dir = tmp_path / "broll"
+    out_dir.mkdir()
+    assert gen_broll._download_person("Jed McCaleb", out_dir) == "assets/broll/person-jedmccaleb.png"
+
+
+def test_manual_lookup_is_by_slug_and_ignores_non_images(people_dir: Path) -> None:
+    manual = people_dir / "manual"
+    manual.mkdir()
+    (manual / "michaelburry.txt").write_text("notes", encoding="utf-8")
+    (manual / "michaelsaylor.jpg").write_bytes(b"x")
+    assert gen_broll._manual_person_photo("michaelburry") is None
+    assert gen_broll._manual_person_photo("michaelsaylor") is not None
+    assert gen_broll._manual_person_photo("nobody") is None
 
 
 def test_no_cached_photo_returns_none(people_dir: Path) -> None:

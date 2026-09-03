@@ -3,7 +3,7 @@
 # that's already done).
 #
 # Usage: open PowerShell, then run:
-#   cd "F:\Claude Code\shortsmith"
+#   cd <your shortsmith checkout>
 #   .\run_everything.ps1
 
 $ErrorActionPreference = "Continue"

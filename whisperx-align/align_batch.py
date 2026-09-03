@@ -16,6 +16,8 @@ Env:
   WHISPERX_COMPUTE  (default "float16")
   WHISPERX_LANG     (default "en")
   WHISPERX_BATCH    (default "16")
+  WHISPERX_INITIAL_PROMPT (default ""): glossary of names the ASR must spell
+                    right; Whisper keeps only the last 224 tokens of it.
 """
 from __future__ import annotations
 
@@ -46,7 +48,10 @@ def main() -> int:
     batch_size = int(os.environ.get("WHISPERX_BATCH", "16"))
 
     t0 = time.time()
-    asr = whisperx.load_model(model_name, device, compute_type=compute, language=lang)
+    prompt = os.environ.get("WHISPERX_INITIAL_PROMPT", "").strip()
+    asr_options = {"initial_prompt": prompt} if prompt else None
+    asr = whisperx.load_model(model_name, device, compute_type=compute, language=lang,
+                              asr_options=asr_options)
     align_model, align_meta = whisperx.load_align_model(language_code=lang, device=device)
     _log(event="model_loaded", seconds=round(time.time() - t0, 1),
          model=model_name, device=device)

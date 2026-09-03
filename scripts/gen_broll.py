@@ -54,6 +54,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 # Reuse the exact overlay-window derivation the renderer uses, so the free gaps
@@ -62,7 +63,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import brand_logos  # noqa: E402
 import person_photos  # noqa: E402
 import wikidata  # noqa: E402
-from render_remotion import _overlay_windows, _pick_base, _probe_duration  # noqa: E402
+from render_remotion import _clip_for, _overlay_windows, _pick_base, _probe_duration  # noqa: E402
+
+from shortsmith.names import word_text  # noqa: E402
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "gen_broll.md"
 GAP_MARGIN = 0.2          # keep slides this far inside each free gap edge
@@ -275,6 +278,49 @@ KNOWN_PEOPLE = {
     "jordan belfort": ("Jordan Belfort", "The Wolf of Wall Street"),
     "patrick bet-david": ("Patrick Bet-David", "Founder, Valuetainment"),
 }
+# Trigger phrases beyond the full name. Speech rarely uses both names: across
+# 382 shorts, 53 mentioned a curated person and only 28 said the full name
+# ("Trump comes out with that", "Sailor lost $6 billion", "CZ said"). A surname
+# alone fires only when nothing else in finance/crypto talk is called that.
+# Common words stay full-name only: wood, fink, powell, armstrong, huang, and
+# schwartz (one transcript names a "Carl von Schwartz").
+PERSON_ALIASES: dict[str, tuple[str, ...]] = {
+    "Brad Garlinghouse": ("garlinghouse",),
+    "Chris Larsen": ("larsen",),
+    "Jed McCaleb": ("mccaleb",),
+    "Michael Saylor": ("saylor",),
+    "Vitalik Buterin": ("vitalik", "buterin"),
+    "Changpeng Zhao": ("changpeng", "cz"),
+    "Warren Buffett": ("buffett",),
+    "Jamie Dimon": ("dimon",),
+    "Michael Burry": ("burry",),
+    "Peter Schiff": ("schiff",),
+    "Jim Rickards": ("rickards",),
+    "Donald Trump": ("trump",),
+    "Gary Gensler": ("gensler",),
+    "Scott Bessent": ("bessent",),
+    "Nayib Bukele": ("bukele",),
+    "Elon Musk": ("elon", "musk"),
+    "Jeff Bezos": ("bezos",),
+    "Mark Zuckerberg": ("zuckerberg",),
+    "Kevin O'Leary": ("o'leary",),
+    "Robert Kiyosaki": ("kiyosaki",),
+    "Jordan Belfort": ("belfort",),
+    "Patrick Bet-David": ("bet-david", "bet david"),
+}
+# How the ASR actually spells some of these. Each is a real word, so it counts
+# only when the transcript capitalizes it mid-sentence or the first name is
+# right in front of it ("Sailor lost $6 billion" yes; "a sailor" no).
+ASR_VARIANTS: dict[str, tuple[str, ...]] = {
+    "Michael Saylor": ("sailor",),
+    "Chris Larsen": ("larson",),
+}
+# A surname right after someone else's first name is someone else. "Barron
+# Trump" is an 1890s novel; "Eric Trump" is not the president.
+ALIAS_NOT_AFTER: dict[str, frozenset[str]] = {
+    "trump": frozenset({"barron", "baron", "eric", "melania", "ivanka",
+                        "tiffany", "lara", "fred"}),
+}
 def _gen_heuristic(words: list[dict], gaps: list[tuple[float, float]], cap: int) -> list[dict]:
     # NOTE: stat slides are intentionally NOT generated — numbers/stats are left
     # to Hyperframes overlays (its bigstat callouts). The heuristic only emits
@@ -302,30 +348,73 @@ def _gen_heuristic(words: list[dict], gaps: list[tuple[float, float]], cap: int)
         m = re.search(rf"\b{re.escape(key)}\b", lower)
         if m:
             # locate approximate time of first mention
-            t = _approx_time(words, key)
+            t = _mention_time(words, key)
             if t is not None:
                 add({"type": "logo", "brand": brand, "name": brand, "mode": "badge"}, t, dur=2.2)
                 seen_brand.add(brand)
 
-    for key, (name, role) in KNOWN_PEOPLE.items():
-        if key in lower:
-            t = _approx_time(words, key)
-            if t is not None:
-                add({"type": "person", "person": name, "name": name, "role": role, "motion": "in"}, t)
+    for name, role, t in find_person_mentions(words):
+        add({"type": "person", "person": name, "name": name, "role": role, "motion": "in"}, t)
 
     slides.sort(key=lambda s: s["start"])
     return slides
 
 
-def _approx_time(words: list[dict], phrase: str) -> float | None:
-    toks = phrase.split()
+_TOKEN_PUNCT = ".,!?;:\"()[]"
+
+
+def _norm_token(raw: str) -> str:
+    """Lower-case a transcript token and strip punctuation and possessives, so
+    "Gensler's," matches "gensler". Apostrophes inside a name (O'Leary) stay."""
+    tok = raw.strip(_TOKEN_PUNCT).lower().replace("\u2019", "'")
+    return tok[:-2] if tok.endswith("'s") else tok
+
+
+def _mention_time(words: list[dict], phrase: str, *, cased_only: bool = False,
+                  not_after: frozenset[str] = frozenset(),
+                  first_name: str = "") -> float | None:
+    """Start time of the first spoken occurrence of `phrase`, or None.
+
+    `cased_only` accepts a match only when the transcript capitalizes it or the
+    speaker's first name precedes it (for ASR mishearings that are real words).
+    `not_after` rejects a match that follows one of those tokens.
+    """
+    toks = phrase.lower().split()
     n = len(toks)
     for i in range(len(words) - n + 1):
-        window = " ".join((words[j].get("text") or words[j].get("word") or "").lower().strip(".,!?")
-                          for j in range(i, i + n))
-        if window == phrase:
-            return float(words[i]["start"])
+        raw = [word_text(words[j]) for j in range(i, i + n)]
+        if [_norm_token(r) for r in raw] != toks:
+            continue
+        prev = _norm_token(word_text(words[i - 1])) if i else ""
+        if prev in not_after:
+            continue
+        if cased_only and not (raw[0][:1].isupper() or prev == first_name):
+            continue
+        return float(words[i]["start"])
     return None
+
+
+def find_person_mentions(words: list[dict]) -> list[tuple[str, str, float]]:
+    """(name, role, first-mention time) for every curated person the transcript
+    names, earliest first. The full name, its aliases and its ASR variants all
+    count; the earliest of them is the mention."""
+    found: list[tuple[str, str, float]] = []
+    for full, (name, role) in KNOWN_PEOPLE.items():
+        first_name = full.split()[0]
+        times: list[float] = []
+        for phrase in (full, *PERSON_ALIASES.get(name, ())):
+            t = _mention_time(words, phrase,
+                              not_after=ALIAS_NOT_AFTER.get(phrase, frozenset()))
+            if t is not None:
+                times.append(t)
+        for variant in ASR_VARIANTS.get(name, ()):
+            t = _mention_time(words, variant, cased_only=True, first_name=first_name)
+            if t is not None:
+                times.append(t)
+        if times:
+            found.append((name, role, min(times)))
+    found.sort(key=lambda mention: mention[2])
+    return found
 
 
 # --------------------------------------------------------------------------- #
@@ -439,6 +528,15 @@ def _is_image(raw: bytes) -> bool:
 # looks the same in every short and one manual correction sticks everywhere.
 PEOPLE_DIR = Path(__file__).resolve().parent.parent / "assets" / "people"
 PEOPLE_MANIFEST = PEOPLE_DIR / "people.json"
+# Photos Wikidata cannot supply (Burry, McCaleb and David Schwartz have no free
+# portrait). Drop a file at assets/people/manual/<slug>.<jpg|png|webp>, where
+# <slug> is the name in lower case with everything but letters and digits
+# removed: "David Schwartz" -> davidschwartz.jpg. A manual photo beats every
+# other source, including the cache and --fresh-photo, because it is the
+# operator's explicit choice. Nothing here checks its license; that is on the
+# operator too.
+MANUAL_DIR = PEOPLE_DIR / "manual"
+IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
 
 
 def _read_manifest() -> dict[str, dict]:
@@ -470,6 +568,32 @@ def _cached_person_photo(slug: str) -> Path | None:
     return hits[0] if hits else None
 
 
+def _manual_person_photo(slug: str) -> Path | None:
+    if not MANUAL_DIR.exists():
+        return None
+    hits = sorted(p for p in MANUAL_DIR.glob(f"{slug}.*")
+                  if p.suffix.lower() in IMAGE_SUFFIXES)
+    return hits[0] if hits else None
+
+
+_PROVENANCE_KEYS = ("source_url", "image_url", "license", "added")
+
+
+def _manual_provenance(photo: Path) -> dict[str, str]:
+    """Where a manual photo came from, read from the <slug>.json beside it."""
+    sidecar = photo.with_suffix(".json")
+    if not sidecar.exists():
+        return {}
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        print(f"    ! unreadable provenance sidecar {sidecar.name}; ignoring it")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: str(data[k]) for k in _PROVENANCE_KEYS if data.get(k)}
+
+
 def _cached_person_photos(slug: str) -> list[Path]:
     return sorted(PEOPLE_DIR.glob(f"{slug}.*")) if PEOPLE_DIR.exists() else []
 
@@ -485,6 +609,17 @@ def _download_person(name: str, out_dir: Path, seed: int | None = None,
     credibility problem the viewer notices and we don't.
     """
     slug = _slug(name)
+    manual = _manual_person_photo(slug)
+    if manual is not None:
+        dest = out_dir / f"person-{slug}{wikidata.file_extension(manual.name)}"
+        shutil.copyfile(manual, dest)
+        entry = {"origin": "manual", "file": f"manual/{manual.name}",
+                 **_manual_provenance(manual)}
+        if _read_manifest().get(name) != entry:
+            _record_manifest(name, entry)
+        print(f"    {name}: manual photo {manual.name}")
+        return f"assets/broll/{dest.name}"
+
     cached = None if fresh else _cached_person_photo(slug)
     if cached is None:
         identity, candidates = person_photos.resolve_photo_candidates(
@@ -531,6 +666,39 @@ def _download_person(name: str, out_dir: Path, seed: int | None = None,
     return f"assets/broll/{dest.name}"
 
 
+def verify_person_slides(slides: list[dict], short_dir: Path,
+                         resolve: Callable[..., str | None] | None = None) -> list[dict]:
+    """Re-resolve every person slide's photo through the verified path instead
+    of trusting its `src`.
+
+    Slides written before identity verification existed still point at photos
+    picked by keyword search (a June short's "David Schwartz" was a photo of
+    Anna Schwartz), and a re-render used to bake them in again. The name is
+    looked up afresh: the repo-wide cache answers for a known person, an
+    unknown one is resolved and cached now, and a person with no verified photo
+    loses the slide. `src` is rewritten to the verified file, so a stale copy
+    in the short's own assets can never reach the screen. Every other slide
+    type passes through untouched.
+    """
+    resolve = resolve or _download_person
+    out_dir = short_dir / "assets" / "broll"
+    kept: list[dict] = []
+    for slide in slides:
+        if slide.get("type") != "person":
+            kept.append(slide)
+            continue
+        name = slide.get("person") or slide.get("name") or ""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        src = resolve(name, out_dir, role_hint=slide.get("role") or "") if name else None
+        if not src:
+            print(f"  ! no verified photo for {name!r}; dropping the person slide")
+            continue
+        if src != slide.get("src"):
+            print(f"  person slide {name!r}: {slide.get('src')!r} -> {src!r} (verified)")
+        kept.append({**slide, "src": src})
+    return kept
+
+
 # --------------------------------------------------------------------------- #
 # Normalize + resolve assets
 # --------------------------------------------------------------------------- #
@@ -564,6 +732,36 @@ def _normalize(slides: list[dict], gaps: list[tuple[float, float]]) -> list[dict
             continue
         deduped.append(s)
     return deduped
+
+
+def on_camera_names(short_dir: Path) -> list[str]:
+    """People the clip spec lists as on screen (`speakers`)."""
+    clip = _clip_for(short_dir) or {}
+    listed = clip.get("speakers") or []
+    if not isinstance(listed, list):
+        return []
+    return [str(n).strip() for n in listed if str(n).strip()]
+
+
+def _same_person(a: str, b: str) -> bool:
+    ta = [t for t in re.split(r"[^a-z']+", a.lower()) if t]
+    tb = [t for t in re.split(r"[^a-z']+", b.lower()) if t]
+    return bool(ta) and bool(tb) and (ta == tb or ta[-1] == tb[-1])
+
+
+def drop_on_camera_people(slides: list[dict], speakers: list[str]) -> list[dict]:
+    """Drop person slides for anyone who is on camera. Cutting to a stock photo
+    of the guest while the guest is talking is a mistake no editor would make."""
+    if not speakers:
+        return slides
+    kept: list[dict] = []
+    for s in slides:
+        name = (s.get("person") or s.get("name") or "") if s.get("type") == "person" else ""
+        if name and any(_same_person(name, sp) for sp in speakers):
+            print(f"  ! {name} is on camera; dropping the person slide")
+            continue
+        kept.append(s)
+    return kept
 
 
 def _resolve_assets(slides: list[dict], short_dir: Path, dry_run: bool,
@@ -618,6 +816,17 @@ def audit_people(names: list[str] | None = None) -> int:
               sorted({(name, role) for name, role in KNOWN_PEOPLE.values()}))
     unusable = 0
     for name, role in roster:
+        manual = _manual_person_photo(_slug(name))
+        if manual is not None:
+            print(f"\n{name} [manual]\n  -> {manual.relative_to(PEOPLE_DIR).as_posix()}"
+                  "  (operator-supplied; beats every other source)")
+            prov = _manual_provenance(manual)
+            if prov:
+                print(f"     source: {prov.get('source_url', '?')}\n"
+                      f"     license: {prov.get('license', 'not recorded')}")
+            else:
+                print("     no provenance recorded (add <slug>.json with source_url and license)")
+            continue
         identity, candidates = person_photos.resolve_photo_candidates(_http_get, name, role)
         if not identity:
             print(f"\n{name}\n  UNRESOLVED: no Wikidata human matches (role hint: {role!r})")
@@ -686,7 +895,7 @@ def generate(short_dir: Path, *, heuristic: bool, cap: int, dry_run: bool,
             print("  ANTHROPIC_API_KEY not set; using heuristic engine")
         raw = _gen_heuristic(words, gaps, cap)
 
-    slides = _normalize(raw, gaps)[:cap]
+    slides = drop_on_camera_people(_normalize(raw, gaps), on_camera_names(short_dir))[:cap]
     slides = _resolve_assets(slides, short_dir, dry_run, photo_seed=photo_seed,
                              fresh_photo=fresh_photo)
 

@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -76,7 +76,7 @@ def _parse_date(v) -> str:
         n = float(s)
         if n > 1e12:
             n /= 1000.0
-        return datetime.utcfromtimestamp(n).strftime("%Y-%m-%d")
+        return datetime.fromtimestamp(n, tz=UTC).strftime("%Y-%m-%d")
     except (ValueError, OverflowError, OSError):
         return ""
 

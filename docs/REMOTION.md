@@ -32,7 +32,9 @@ The b-roll picker reads the clip transcript and proposes cutaways that match wha
 
 **Claude engine** (default when `ANTHROPIC_API_KEY` is set) — reads the transcript + free gaps and proposes stat / text / list / logo / person slides. The system prompt is at [`prompts/gen_broll.md`](../prompts/gen_broll.md).
 
-**Heuristic fallback** — regex on transcript for dollar amounts / percentages → stat slides; small curated map of crypto/tech brands and persons → logo/person slides. No API call. Trigger with `--heuristic`.
+**Heuristic fallback** — regex on transcript for dollar amounts / percentages → stat slides; small curated map of crypto/tech brands and persons → logo/person slides. No API call. Trigger with `--heuristic`. People are matched on the full name, on surname aliases where the word is unambiguous (`PERSON_ALIASES`: Trump, Gensler, Buffett, Elon, CZ...), and on ASR mishearings (`ASR_VARIANTS`: "Sailor", "Larson") when the transcript capitalizes them or the first name precedes them. A surname after someone else's first name ("Barron Trump") does not count, and possessives ("Gensler's") do not hide a mention.
+
+**Split-stack shorts** keep their b-roll. Cutaways play full-frame as usual. A logo badge moves off its usual upper-center spot (the top speaker's face is there) to a mark-only tile on the blurred backdrop beside the top square: `render_remotion._logo_badge_anchor` derives the spot from the layout preset and passes it to Remotion as `logoBadgeAnchor`; a preset with no backdrop beside the squares drops the badges instead. Person slides are never proposed for anyone in the clip spec's `speakers` list (`gen_broll.drop_on_camera_people`).
 
 ### Asset sourcing
 
@@ -70,11 +72,23 @@ Candidates are ranked to prefer the entity's designated portrait (P18) and solo 
 
 Verified photos are cached repo-wide in `assets/people/` (not per-short), so a person looks identical in every short and one correction sticks everywhere. [`assets/people/people.json`](../assets/people/people.json) is the audit trail: name → QID, Commons filename, and why it was chosen.
 
+The renderer re-verifies too. `render_remotion._merge_broll` hands every auto person slide to `gen_broll.verify_person_slides()`, which resolves the name again (cache first, Wikidata otherwise) and rewrites `src` to the verified file, or drops the slide. Without this, a `broll.auto.json` written before verification existed kept pointing at its keyword-search photo, and a re-render baked it in again: the July 31 batch shipped Anna Schwartz as David Schwartz. Manual `broll.json` slides are not touched.
+
 ```bash
 uv run python scripts/gen_broll.py --audit-people
 ```
 
-Prints the resolved identity and chosen photo for every curated person, with alternates. Run it after editing `PERSON_QIDS`. To force a specific file for one person, add it to `PERSON_PHOTO_OVERRIDES`. `--fresh-photo` re-picks past the cache; `--photo-seed` makes the pick reproducible.
+Prints the resolved identity and chosen photo for every curated person, with alternates. Run it after editing `PERSON_QIDS`. To force a specific Commons file for one person, add it to `PERSON_PHOTO_OVERRIDES`. `--fresh-photo` re-picks past the cache; `--photo-seed` makes the pick reproducible.
+
+To supply your own photo (a person with no free portrait, or a better one than Commons has), save it as `assets/people/manual/<slug>.<jpg|png|webp>` with `<slug>` = the name in lower case, letters and digits only (`davidschwartz.jpg`, `jedmccaleb.png`). `gen_broll._download_person` checks that folder before the cache and before Wikidata, so it wins even against `--fresh-photo`, and the audit lists it as `[manual]`. The manifest records `{"origin": "manual", "file": ...}`. The folder is gitignored with the rest of `assets/people/`; its licensing is the operator's call. Put a `<slug>.json` beside the photo with `source_url`, `image_url`, `license` and `added`, and those fields are copied into the manifest and printed by the audit.
+
+An unpinned name is ranked by notability, not by label. `resolve_identity` asks Wikidata for each candidate's sitelinks (how many Wikimedia projects have a page for it) and scores +1 per five of them, capped at +10; an exact label match is worth one point and the role hint three per matched token. A human with fewer than five sitelinks is eligible only when the role hint matched, so "Michael Saylor" can no longer resolve to a substitute teacher whose label happens to be exact.
+
+Captions and b-roll read the same corrected words. Whisper is prompted with the glossary in `shortsmith/names.py` (`Config.whisper_initial_prompt`, also handed to the WhisperX worker as `WHISPERX_INITIAL_PROMPT`), and `names.fix_words` respells the mishearings that survive, at transcription and again after alignment.
+
+### When a short re-renders
+
+`apply_remotion` decides with a render stamp (`scripts/render_stamp.py`), not a file date. After a render it writes `renders/final_remotion.stamp.json`, a digest of every input: the base render, the clip spec, `words.json`, the manual `broll.json`, the photo state of each person the words name (manifest entry, cached file, manual file), the render code (`render_remotion.py`, `gen_broll.py`, the resolvers, the layout presets, `remotion/src/*`), and the style / platform / captions switches. Before the next render it recomputes the digest; a match skips, a mismatch re-renders and prints which inputs changed. A short with no stamp was rendered before stamps existed and keeps the old rule (newer than its base) until `--force-remotion`; `finalize` reports how many it left alone. A b-roll generation failure no longer passes in silence: it is printed with a `!!` prefix, the render proceeds with the previous list, and the phase summary counts it.
 
 ### Network politeness
 

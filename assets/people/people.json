@@ -8,6 +8,31 @@
     "score": 42,
     "cached_as": "cathiewood.jpg"
   },
+  "David Schwartz": {
+    "origin": "manual",
+    "file": "manual/davidschwartz.jpg",
+    "source_url": "https://www.theblock.co/profile/313826/david-schwartz",
+    "image_url": "https://www.tbstat.com/wp/uploads/2024/05/Frame-23-675x675.jpg",
+    "license": "unknown; third-party editorial photo supplied by the operator",
+    "added": "2026-09-03"
+  },
+  "Gary Gensler": {
+    "qid": "Q1494852",
+    "label": "Gary Gensler",
+    "description": "American former government official",
+    "commons_file": "Gary Gensler, SEC Chair.jpg",
+    "origin": "P18",
+    "score": 42,
+    "cached_as": "garygensler.jpg"
+  },
+  "Jed McCaleb": {
+    "origin": "manual",
+    "file": "manual/jedmccaleb.png",
+    "source_url": "https://stellar.org/foundation/team",
+    "image_url": "https://cdn.sanity.io/images/e2r40yh6/production-i18n/067051b74ad2e2164bce7ffce1f46a1bc0b5c64c-600x600.png",
+    "license": "unknown; Stellar Development Foundation team photo supplied by the operator",
+    "added": "2026-09-03"
+  },
   "Michael Saylor": {
     "qid": "Q6831501",
     "label": "Michael J. Saylor",
@@ -16,5 +41,14 @@
     "origin": "P18",
     "score": 42,
     "cached_as": "michaelsaylor.png"
+  },
+  "Warren Buffett": {
+    "qid": "Q47213",
+    "label": "Warren Buffett",
+    "description": "American investor, entrepreneur and businessman",
+    "commons_file": "Warren Buffett KU Visit.jpg",
+    "origin": "P18",
+    "score": 42,
+    "cached_as": "warrenbuffett.jpg"
   }
 }

@@ -85,6 +85,23 @@ def _ext_of(filename: str) -> str:
     return wikidata.file_extension(filename, default=".svg")
 
 
+def _sniff_ext(raw: bytes, fallback: str) -> str:
+    """Extension for the bytes we actually received, not the source filename.
+
+    Commons' width-resized URL rasterises vector sources, so a P154 filename
+    ending `.svg` routinely comes back as PNG. Naming those bytes `.svg` makes
+    the browser refuse to decode the image, which fails the whole Remotion
+    render rather than just dropping one b-roll slide.
+    """
+    if raw.startswith(b"\x89PNG"):
+        return ".png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if b"<svg" in raw[:600].lower():
+        return ".svg"
+    return fallback
+
+
 # --------------------------------------------------------------------------- #
 # 1. Simple Icons
 # --------------------------------------------------------------------------- #
@@ -212,7 +229,8 @@ def from_wikidata(fetch: Fetch, brand: str) -> LogoResult | None:
     raw = fetch(wikidata.commons_file_url(identity.logo, width=1024))
     if not raw or len(raw) < 200:
         return None
-    return LogoResult(data=raw, ext=_ext_of(identity.logo), source="wikidata-p154",
+    return LogoResult(data=raw, ext=_sniff_ext(raw, _ext_of(identity.logo)),
+                      source="wikidata-p154",
                       detail=f"{identity.qid} {identity.logo}")
 
 

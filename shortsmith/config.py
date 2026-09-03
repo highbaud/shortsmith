@@ -12,6 +12,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import names
+
 # Repo root = parent of the shortsmith/ package directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -102,6 +104,11 @@ class Config:
     whisper_model: str = os.environ.get("SHORTSMITH_WHISPER_MODEL", "large-v3")
     whisper_device: str = os.environ.get("SHORTSMITH_WHISPER_DEVICE", "cuda")
     whisper_compute_type: str = os.environ.get("SHORTSMITH_WHISPER_COMPUTE", "float16")
+    # Glossary handed to Whisper as its prompt, so names come out spelled
+    # right (shortsmith/names.py). Override with SHORTSMITH_WHISPER_PROMPT; set
+    # it empty to send no prompt.
+    whisper_initial_prompt: str = os.environ.get("SHORTSMITH_WHISPER_PROMPT",
+                                                 names.initial_prompt())
 
     # Clip engine. "anthropic" (default, best quality, costs API credits) or
     # "ollama" (local OpenAI-compatible endpoint, free, experimental, requires
@@ -291,6 +298,24 @@ class Config:
     reframe_scene_threshold: float = float(
         os.environ.get("SHORTSMITH_SCENE_THRESHOLD", "0.30"))  # ffmpeg scene score for a cut
     reframe_min_shot_seconds: float = 0.4   # merge shorter shots into the previous one
+
+    # Split-stack reframe (gallery view: BOTH speakers on screen at once, side
+    # by side, as Zoom/Riverside/StreamYard record it). Neither other mode can
+    # handle that source, a static crop frames one speaker and loses the other,
+    # and cut-aware finds no cuts because the layout never changes. Split-stack
+    # crops a square around each speaker and stacks them, first on top, with the
+    # captions in the gap between so they never cross a face.
+    #   "static": one crop for the clip (default; unchanged behavior)
+    #   "split-stack": force the stacked layout, fail if it is not a gallery
+    #   "auto": use it when a two-up gallery is detected, else static
+    # Override per run with --layout / SHORTSMITH_REFRAME_LAYOUT, or per clip via
+    # clips.json "layout": "split-stack".
+    reframe_layout: str = os.environ.get("SHORTSMITH_REFRAME_LAYOUT", "static").lower()
+    # Every geometry and styling decision for the stacked format lives in a saved
+    # preset under templates/layouts/, so a format tuned on real footage can be
+    # reused verbatim. Override per clip with clips.json "layout_preset".
+    split_stack_preset: str = os.environ.get(
+        "SHORTSMITH_LAYOUT_PRESET", "two-speaker-stack")
 
     # Scaffold
     enable_captions: bool = False  # karaoke captions inclusion in index.html

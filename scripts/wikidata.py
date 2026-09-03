@@ -90,6 +90,14 @@ def search_entity_ids(fetch: Fetch, name: str, limit: int = 10) -> list[str]:
     return [hit["id"] for hit in (result.get("search") or []) if hit.get("id")]
 
 
+def sitelinks_count(entity: dict) -> int:
+    """How many Wikimedia projects have a page for the entity. A cheap
+    notability signal: a substitute teacher has none, the MicroStrategy
+    founder has dozens."""
+    links = entity.get("sitelinks")
+    return len(links) if isinstance(links, dict) else 0
+
+
 def label_of(entity: dict) -> str:
     return ((entity.get("labels", {}).get("en") or {}).get("value") or "")
 

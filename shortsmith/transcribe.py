@@ -9,6 +9,7 @@ import json
 import logging
 from pathlib import Path
 
+from . import names
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ def transcribe(
             tag = candidate.stem.replace("transcript-", "").lower()
             if tag and tag in stem_lower:
                 log.info("Reusing existing transcript %s", candidate)
-                words = json.loads(candidate.read_text(encoding="utf-8"))
+                words = names.fix_words(json.loads(candidate.read_text(encoding="utf-8")))
                 _write_words(out_path, words)
                 return words
 
@@ -55,6 +56,7 @@ def transcribe(
         segments, info = model.transcribe(
             str(video_path),
             word_timestamps=True,
+            initial_prompt=cfg.whisper_initial_prompt or None,
             vad_filter=True,
             vad_parameters={"min_silence_duration_ms": 250},
         )
@@ -72,6 +74,7 @@ def transcribe(
     except Exception as e:  # noqa: BLE001
         raise RuntimeError(_whisper_error_hint(e, cfg)) from e
 
+    words = names.fix_words(words)
     _write_words(out_path, words)
     log.info("Wrote %d words to %s", len(words), out_path)
     return words

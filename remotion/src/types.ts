@@ -108,6 +108,20 @@ export type VFXEvent = {
   durationMs: number; // total length of this single event
 };
 
+/** A speaker square's position on the 1080x1920 canvas, in px. */
+export type PanelRect = { x: number; y: number; w: number; h: number };
+
+export type SpeakerLabel = {
+  name: string;
+  /** Which stacked square the chip belongs to. */
+  position: "top" | "bottom";
+};
+
+/** Where a logo badge sits on a split-stack short: a mark-only tile on the
+ *  blurred backdrop beside the top speaker's square, in px. Absent on
+ *  single-speaker shorts, where the badge pops into the upper center. */
+export type BadgeAnchor = { x: number; y: number; size: number };
+
 export type ShortProps = {
   /** Base video, resolved relative to Remotion's public dir (the short folder).
    *  Normally the Hyperframes "renders/final.mp4" so its overlays stay intact. */
@@ -138,7 +152,26 @@ export type ShortProps = {
    *  scale pulse on the base video to reset attention during long talking-head
    *  stretches with no other motion. Planned in the free gaps between overlays,
    *  b-roll, and VFX so it never competes with a hook/callout. Empty = off. */
+  /** Caption type size in px. Defaults to 96. Lowered when the caption band is
+   *  tight, a split-stack band is bracketed by a face above and below, so
+   *  captions have to fit rather than overflow. */
+  captionFontSize?: number;
+
   ambientPunches?: number[];
+
+  /** Speaker name chips for split-stack (two-up) shorts. The source's own Zoom
+   *  name badges sit in the corner of each tile and get cropped away by the
+   *  square crop, so the layout re-adds them on its own terms. Each chip is
+   *  drawn inside its panel, never in the caption band. */
+  speakerLabels?: SpeakerLabel[];
+
+  /** Where the two speaker squares sit, top first. Supplied by the layout
+   *  preset, the caption band alone does not imply the panel geometry once the
+   *  layout carries safe-area margins. */
+  speakerPanels?: PanelRect[];
+
+  /** Split-stack only: where the logo badge goes (see BadgeAnchor). */
+  logoBadgeAnchor?: BadgeAnchor;
 };
 
 export const defaultShortProps: ShortProps = {
@@ -159,5 +192,8 @@ export const defaultShortProps: ShortProps = {
     bg: "#07121c",
   },
   vfxEvents: [],
+  captionFontSize: 96,
   ambientPunches: [],
+  speakerLabels: [],
+  speakerPanels: [],
 };

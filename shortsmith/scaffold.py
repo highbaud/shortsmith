@@ -43,6 +43,29 @@ def _load_style(name: str) -> dict:
     return json.loads(style_path.read_text(encoding="utf-8"))
 
 
+# Fields the reframe step works out that the downstream caption/render layer
+# needs. They are computed from the footage, so they cannot be in the authored
+# clips.json, carry them across into the copy that ships with the projects.
+_MANIFEST_PASSTHROUGH = ("caption_band", "layout", "layout_preset")
+
+
+def _write_merged_clips(clips: list[dict], manifests: list[dict], dest: Path) -> None:
+    """Write _clips.json: the authored clip specs plus the reframe-derived
+    fields, joined on rank. Authored values win, so a hand-set caption_band is
+    never overwritten by a detected one."""
+    by_rank = {m.get("rank"): m for m in manifests}
+    merged = []
+    for clip in clips:
+        out = dict(clip)
+        m = by_rank.get(clip.get("rank"))
+        if m:
+            for key in _MANIFEST_PASSTHROUGH:
+                if key in m and key not in out:
+                    out[key] = m[key]
+        merged.append(out)
+    dest.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def scaffold_all(
     clip_manifests: list[dict],
     clips: list[dict],
@@ -59,7 +82,7 @@ def scaffold_all(
     if src_transcript.exists():
         shutil.copy(src_transcript, out_root / "_transcript.json")
     if src_clips.exists():
-        shutil.copy(src_clips, out_root / "_clips.json")
+        _write_merged_clips(clips, clip_manifests, out_root / "_clips.json")
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),

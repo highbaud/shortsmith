@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
-from . import transcribe
+from . import names, transcribe
 from .config import WHISPERX_ALIGN_PROJECT, Config
 
 log = logging.getLogger(__name__)
@@ -74,7 +75,24 @@ def align_all(manifests: list[dict], cfg: Config) -> list[dict]:
             words_out.write_text("[]", encoding="utf-8")
             m["words_path"] = str(words_out)
 
+    # Respell known mishearings in every alignment, whichever engine produced
+    # it, so a caption never shows "Sailor" for Saylor.
+    for m in manifests:
+        _fix_names(Path(m["words_path"]))
     return manifests
+
+
+def _fix_names(words_path: Path) -> None:
+    try:
+        words = json.loads(words_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(words, list):
+        return
+    fixed = names.fix_words(words)
+    if fixed != words:
+        words_path.write_text(json.dumps(fixed, indent=2, ensure_ascii=False),
+                              encoding="utf-8")
 
 
 def _run_whisperx_batch(jobs: list[tuple[Path, Path]], cfg: Config) -> set[str]:
@@ -95,6 +113,7 @@ def _run_whisperx_batch(jobs: list[tuple[Path, Path]], cfg: Config) -> set[str]:
     proc = subprocess.Popen(
         ["uv", "run", "--project", str(WHISPERX_ALIGN_PROJECT), "python", str(align_batch_py)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env={**os.environ, "WHISPERX_INITIAL_PROMPT": cfg.whisper_initial_prompt or ""},
     )
     stdout, stderr = proc.communicate(input=json.dumps(manifest), timeout=7200)
 

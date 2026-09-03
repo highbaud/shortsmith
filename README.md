@@ -81,7 +81,7 @@ Switch backends with `--clip-engine ollama` or `SHORTSMITH_CLIP_ENGINE=ollama`. 
 
 ## The 11-phase pipeline (what each step does)
 
-**1. Transcribe** — faster-whisper large-v3 on GPU, word-level timestamps. Reuses a sibling `transcript-<stem>.json` if present.
+**1. Transcribe** — faster-whisper large-v3 on GPU, word-level timestamps. Reuses a sibling `transcript-<stem>.json` if present. Whisper is prompted with a glossary of the names and terms this channel uses (`shortsmith/names.py`), and the mishearings that survive ("Sailor" for Saylor, "Larson" for Larsen) are respelled before anything downstream reads the words, so captions never show them.
 
 **2. Find viral clips** — Claude (or local LLM) reads the transcript and returns a `clips.json` with `viral_score`, `hook_text`, `callouts`, `instagram_caption`, and a `segments` list that can reorder a clip to lead with the hook.
 
@@ -105,6 +105,8 @@ Switch backends with `--clip-engine ollama` or `SHORTSMITH_CLIP_ENGINE=ollama`. 
 
 **Consolidation** — `scripts/finalize.py` runs all three render phases and copies `final_sfx.mp4` + matching `caption.txt` into `<kit>/renders/_all/<source>__<short>.{mp4,txt}` with a flat naming scheme. Idempotent — safe to re-run.
 
+A short re-renders only when something it depends on changed. `scripts/render_stamp.py` records a digest of every input beside each render (the base video, the clip spec, the words, the manual b-roll list, the photo state of every person the words name, the render code, and the style / platform / captions switches), and `apply_remotion` compares it before rendering again. A short rendered before stamps existed keeps the old rule (newer than its base render) until `--force-remotion` rebuilds it, so an unscoped finalize never rebuilds the whole library by surprise; the phase summary says how many such shorts it left alone.
+
 ## Configuration
 
 All paths and tunables override via env vars or a project-local `.env` (auto-loaded). See [`.env.example`](.env.example) for the full surface. High-traffic knobs:
@@ -121,6 +123,7 @@ All paths and tunables override via env vars or a project-local `.env` (auto-loa
 | `SHORTSMITH_WHISPER_MODEL` | `large-v3` | `small` / `medium` / `large-v3` |
 | `SHORTSMITH_MIN_SCORE` | `7` | Reject clips below this viral score (1–10) |
 | `SHORTSMITH_HYPERFRAMES_VERSION` | `0.7.71` | Pinned Hyperframes CLI. `latest` floats off the pin |
+| `SHORTSMITH_WHISPER_PROMPT` | glossary from `shortsmith/names.py` | Names and terms Whisper must spell right. Set empty to send no prompt |
 
 ## Common operations
 
@@ -188,6 +191,84 @@ Related per-clip flag: `"captions": false` in `clips.json` makes the finalize
 pass skip shortsmith's caption layer for that clip — use it when the source has
 its own burned-in captions (common on podcast exports).
 
+## Gallery view / both speakers on screen at once (split-stack)
+
+Cut-aware mode handles a podcast that *cuts between* two cameras. It cannot help
+when both speakers are on screen **at the same time**: a Zoom / Riverside /
+StreamYard "gallery view" export, where the layout never changes for the whole
+recording. There are no cuts to find, and a single crop frames one speaker while
+losing the other.
+
+`--layout split-stack` (or `SHORTSMITH_REFRAME_LAYOUT=split-stack`, or per-clip
+`"layout": "split-stack"` in `clips.json`) treats the source as what it actually
+is, two camera feeds sharing one frame:
+
+1. detect the two webcam tiles from the frame's bright regions,
+2. track each speaker's face **inside their own tile**, so the two can never be
+   confused for one another,
+3. crop a square around each and stack them, first speaker top, second bottom,
+   over a blurred backdrop, with a gold hairline around each square,
+4. reserve the gap between the squares as the caption band, so captions sit dead
+   center screen and cross neither face.
+
+`--layout auto` uses the stacked layout only when a two-up gallery is actually
+detected, and falls back to the normal crop otherwise, so mixed batches are fine.
+
+**Head sizes are normalized.** Speakers rarely sit the same distance from their
+webcams (in testing one speaker's face measured 540px against the other's 325px).
+Each square is sized so both faces fill the same fraction of their panel,
+otherwise stacking them makes the mismatch glaring.
+
+**One audio stream, by construction.** The two panels are two crops of a *single*
+decoded input (ffmpeg `split`), not the same file passed as two inputs. Passing
+it twice is exactly what produces doubled audio on two-up sources. Audio is
+mapped once and stream-copied, so it also cannot drift against the video.
+
+**Name badges.** Gallery apps burn the participant's name into the bottom-left of
+their tile, which a square crop tends to clip in half. Each crop slides clear of
+that corner, and the layout re-adds proper name chips instead. Set them with
+`"speakers": ["Jake Claver", "John Deaton"]` in `clips.json`, top speaker first.
+
+**Faces stay out of the platform UI.** Every app draws its caption, username and
+music ticker over the bottom of the frame, so the layout insets the whole
+composition (30px top, 200px bottom) instead of running edge to edge, and places
+the top speaker's face low in its square and the bottom speaker's high, so both
+lean toward the middle, away from the chrome. Verified against the real zones:
+faces land at 0.095–0.287 and 0.585–0.790 of frame height, clear of TikTok's top
+bar (<0.07) and caption zone (>0.83), IG Reels (>0.86) and YT Shorts (>0.88).
+
+**B-roll on a stacked short.** Full-frame cutaways (a person, a logo card, a text
+slide) play as on any other short. A logo *badge* cannot use its usual spot, the
+upper center, because the top speaker's face is there; it becomes a mark-only tile on
+the blurred backdrop beside the top square, below every platform's top bar and outside
+both squares and the caption band by construction. A preset that leaves no backdrop
+beside the squares drops the badges and keeps everything else. A preset that cannot be
+loaded at all stops the render with a `LayoutPresetError`, because the fallback would
+be captions on a face.
+
+### Saved layout presets
+
+The whole format lives in `templates/layouts/<name>.json`, so a look tuned on
+real footage is reused verbatim on the next video rather than re-derived. The
+shipped preset is **`two-speaker-stack`**.
+
+```bash
+uv run shortsmith run "podcast.mp4" --layout split-stack
+uv run shortsmith run "podcast.mp4" --layout split-stack --layout-preset my-variant
+```
+
+Also settable with `SHORTSMITH_LAYOUT_PRESET`, or per clip with
+`"layout_preset": "<name>"` in `clips.json`.
+
+To make a variant, copy the JSON and change what you need. The loader validates
+the geometry on load, so a preset whose numbers do not fit the 1920px frame (or
+that squeezes captions under 220px) fails immediately instead of rendering a bad
+batch. Keys: `panel` / `band` / `top_margin` / `bottom_margin` (composition),
+`face_height_frac` / `face_target_y_top` / `face_target_y_bottom` /
+`match_face_size` (framing), `order` (`"rl"` puts the right-hand tile on top),
+`avoid_badge` + `badge_w_frac` / `badge_h_frac`, `border_color` /
+`border_width` / `bg_blur` / `bg_dim` (dressing).
+
 ## Pre-made shorts (already cut + cropped)
 
 If a clip is already a finished 1080x1920 short, skip find/cut/clean/reframe
@@ -236,6 +317,39 @@ Verified photos are cached repo-wide in `assets/people/`, so a person looks iden
 in every short and one correction sticks everywhere. `assets/people/people.json` is the
 audit trail. Full detail, including how to pin a QID or force a specific file:
 [docs/REMOTION.md](docs/REMOTION.md).
+
+For a person Wikidata cannot supply (Michael Burry, Jed McCaleb and David Schwartz
+have no free portrait), drop your own photo at `assets/people/manual/<slug>.jpg`
+(`.png` / `.webp` also fine), where `<slug>` is the name in lower case with everything
+but letters and digits removed: `davidschwartz.jpg`, `jedmccaleb.png`. A manual photo
+beats every other source, including `--fresh-photo`; `--audit-people` shows it as
+`[manual]`. Licensing is on you: nothing checks it.
+
+The renderer does not trust a slide's `src` either. Every auto person slide is
+re-resolved through the same verified path at render time
+(`gen_broll.verify_person_slides`), so a `broll.auto.json` written before verification
+existed can no longer bake its keyword-search photo into a re-render. A person with no
+verified photo loses the slide; hand-authored `broll.json` slides pass through as
+written, which is the escape hatch for a guest with no Wikidata item.
+
+Detection hears people the way they are actually said. Speech rarely uses both names
+("Trump comes out with that", "Sailor lost $6 billion", "CZ said"), so each curated
+person also carries surname aliases (`PERSON_ALIASES`) where nothing else in finance
+talk shares the word, and ASR variants (`ASR_VARIANTS`) that count only when
+capitalized mid-sentence or preceded by the first name. Common-word surnames (Wood,
+Fink, Powell, Schwartz) stay full-name only, and a surname after someone else's first
+name ("Barron Trump") is not a match.
+
+Nobody who is on camera gets a cutaway. The clip spec's `speakers` list (the same one
+the split-stack name chips use) is checked before a person slide is kept, so an
+interview with Brad Garlinghouse never cuts to a stock photo of him while he talks.
+
+A name that is not pinned to a Wikidata QID is ranked by how many Wikimedia projects
+have a page for it, not by an exact label match. A person with fewer than five such
+pages resolves only when the slide's `role` hint matches, so a namesake nobody has
+written about is a dropped slide, never a wrong face. Beside a manual photo, a
+`<slug>.json` sidecar with `source_url` and `license` is copied into the manifest and
+shown by `--audit-people`, so the paper trail for a third-party photo lives next to it.
 
 ## Visual style presets
 

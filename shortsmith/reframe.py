@@ -41,7 +41,9 @@ import statistics
 import subprocess
 from pathlib import Path
 
+from . import gallery
 from .config import Config
+from .layouts import LayoutSpec, load_preset
 
 log = logging.getLogger(__name__)
 
@@ -55,16 +57,32 @@ def reframe_all(
     vertical_dir.mkdir(parents=True, exist_ok=True)
 
     global_cut_aware = bool(getattr(cfg, "reframe_cut_aware", False))
+    global_layout = str(getattr(cfg, "reframe_layout", "static")).lower()
 
     for m in clip_manifests:
         rank = m["rank"]
         src = Path(m.get("enhanced_path") or m.get("cleaned_path") or m["raw_path"])
         out = vertical_dir / f"short-{rank:02d}.mp4"
-        # Per-clip override wins (lets one run mix single-speaker and multicam
-        # clips); else fall back to the run-level config flag.
+        # Per-clip overrides win (one run can mix single-speaker, multicam and
+        # gallery clips); else fall back to the run-level config.
+        layout = str(m.get("layout", global_layout)).lower()
         cut_aware = bool(m.get("multicam", global_cut_aware))
         try:
-            if cut_aware:
+            if layout in ("split-stack", "auto"):
+                band = reframe_one_split_stack(
+                    src, out, cfg, required=(layout == "split-stack"),
+                    preset=m.get("layout_preset"),
+                )
+                if band is not None:
+                    # Tell the caption layer to sit in the gap between the two
+                    # speaker squares instead of auto-placing around a face.
+                    m["caption_band"] = band
+                    m["layout"] = "split-stack"
+                elif cut_aware:
+                    reframe_one_cut_aware(src, out, cfg)
+                else:
+                    reframe_one(src, out, cfg)
+            elif cut_aware:
                 reframe_one_cut_aware(src, out, cfg)
             else:
                 reframe_one(src, out, cfg)
@@ -402,6 +420,229 @@ def reframe_one_cut_aware(src_video: Path, out_video: Path, cfg: Config) -> None
         "-movflags", "+faststart",
         str(out_video),
     ], check=True, capture_output=True)
+
+
+# ---------------------------------------------------------------------------
+# Split-stack (gallery view / two speakers on screen at once)
+# ---------------------------------------------------------------------------
+
+
+def _grab_gray_frame(src_video: Path, at_frac: float = 0.5):
+    """Decode one frame from `at_frac` through the clip as grayscale."""
+    import cv2  # lazy import
+
+    cap = _open_capture(src_video)
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+    if total > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(total * at_frac))
+    ok, frame = cap.read()
+    cap.release()
+    if not ok:
+        raise RuntimeError(f"Could not read a frame from {src_video}")
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+
+def _sample_faces_in_tiles(
+    src_video: Path, tiles: list[gallery.Rect], cfg: Config,
+    sample_every: int = 0,
+) -> list[list[Detection]]:
+    """One decode pass, detecting faces inside each tile separately.
+
+    Running the detector on the cropped tile (rather than the whole frame and
+    then asking which half a face landed in) keeps the two speakers from ever
+    being confused for one another, and gives the detector a sensibly-sized
+    input. Returned coordinates are TILE-LOCAL.
+    """
+    import cv2  # lazy import
+
+    detectors = [
+        cv2.FaceDetectorYN_create(
+            str(cfg.yunet_model_path), "", (t.w, t.h),
+            cfg.yunet_score_threshold, 0.3, 5000,
+        )
+        for t in tiles
+    ]
+    # Nobody moves much in a webcam grid, so sample far less often than the
+    # motion-tracking path needs.
+    sample = max(1, sample_every or cfg.reframe_sample_every * 4)
+
+    cap = _open_capture(src_video)
+    out: list[list[Detection]] = [[] for _ in tiles]
+    idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        if idx % sample == 0:
+            for i, t in enumerate(tiles):
+                sub = frame[t.y:t.y + t.h, t.x:t.x + t.w]
+                _, faces = detectors[i].detect(sub)
+                if faces is not None and len(faces) > 0:
+                    best = max(faces, key=lambda f: f[-1])
+                    score = float(best[-1])
+                    if score >= cfg.yunet_score_threshold:
+                        x, y, w, h = (float(best[0]), float(best[1]),
+                                      float(best[2]), float(best[3]))
+                        out[i].append((x + w / 2.0, y + h / 2.0, h, score))
+        idx += 1
+    cap.release()
+    return out
+
+
+def _split_stack_filtergraph(
+    crops: list[gallery.Rect], layout: gallery.StackLayout, spec: LayoutSpec
+) -> str:
+    """Build the single-input filtergraph that composes the stacked squares.
+
+    Deliberately ONE input: the two panels are two crops of the same decoded
+    stream (via `split`), not two `-i` arguments. Passing the file twice is what
+    produces the doubled-audio failure on two-up sources, because each input
+    carries its own copy of the same audio track.
+    """
+    border = spec.border_color
+    border_px = spec.border_width
+    blur = spec.bg_blur
+    dim = spec.bg_dim
+    W, H = layout.width, layout.height
+    panels = [layout.top, layout.bottom]
+
+    parts = [
+        # Ambient backdrop: the source frame itself, blown up to fill, blurred
+        # and dimmed. Keeps the margins beside the squares feeling like part of
+        # the shot instead of dead black bars.
+        "[0:v]split=3[bg][s0][s1]",
+        f"[bg]crop=ih*{W}/{H}:ih,scale={W}:{H}:flags=bilinear,"
+        f"boxblur={blur}:2,eq=brightness=-{dim:.2f}:saturation=0.55,setsar=1[bgv]",
+    ]
+    for i, (crop, panel) in enumerate(zip(crops, panels, strict=True)):
+        parts.append(
+            f"[s{i}]{crop.ffmpeg_crop},"
+            f"scale={panel.w}:{panel.h}:flags=lanczos,setsar=1[p{i}]"
+        )
+
+    prev = "bgv"
+    for i, panel in enumerate(panels):
+        nxt = f"o{i}"
+        parts.append(f"[{prev}][p{i}]overlay={panel.x}:{panel.y}[{nxt}]")
+        prev = nxt
+
+    boxes = ",".join(
+        f"drawbox=x={p.x}:y={p.y}:w={p.w}:h={p.h}:color={border}:t={border_px}"
+        for p in panels
+    )
+    parts.append(f"[{prev}]{boxes},format=yuv420p[outv]")
+    return ";".join(parts)
+
+
+def reframe_one_split_stack(
+    src_video: Path, out_video: Path, cfg: Config, required: bool = True,
+    preset: str | None = None,
+) -> dict[str, float] | None:
+    """Reframe a gallery-view two-speaker source into stacked squares.
+
+    Detects the two webcam tiles, tracks each speaker's face inside their own
+    tile, crops a square around each, and stacks them, first speaker on top,
+    second below, with a caption band in the gap between them. The saved layout
+    preset supplies every geometry and styling decision.
+
+    Returns the caption band (height fractions) so the caption layer can be
+    pointed at that gap. Returns None when the source is not a two-up gallery
+    and `required` is False, letting the caller fall back to another mode.
+    """
+    if not cfg.yunet_model_path.exists():
+        raise FileNotFoundError(f"YuNet model not found at {cfg.yunet_model_path}")
+
+    spec = load_preset(preset or getattr(cfg, "split_stack_preset", None))
+    frame = _grab_gray_frame(src_video)
+    frame_h, frame_w = frame.shape[:2]
+
+    # A preset may pin the tile geometry measured off the real source. That
+    # skips brightness detection, which cannot see a tile whose own content is
+    # dark (a black studio backdrop, a speaker in dark clothing).
+    tiles = spec.pinned_tiles(frame_w, frame_h)
+    if tiles is None:
+        tiles = gallery.detect_tiles(frame, dark_threshold=spec.dark_threshold)
+        if not gallery.looks_like_two_up(tiles):
+            msg = (f"{src_video.name}: expected a two-up gallery, found "
+                   f"{len(tiles)} tile(s)")
+            if required:
+                raise RuntimeError(msg)
+            log.info("%s; not using split-stack", msg)
+            return None
+
+    # Left tile goes on top by default (reading order); flip for sources where
+    # the guest is on the left.
+    if spec.order.lower() == "rl":
+        tiles = list(reversed(tiles))
+
+    layout = spec.layout()
+    per_tile = _sample_faces_in_tiles(src_video, tiles, cfg, spec.sample_every)
+
+    # Each speaker's "natural" framing: how much of a full-tile-height square
+    # their face already fills. A speaker sitting close to their webcam can only
+    # be zoomed IN, never out past their tile, so the shared target has to be at
+    # least the largest natural value, otherwise the two heads end up wildly
+    # different sizes in a layout that puts them right on top of each other.
+    medians: list[tuple[float, float, float] | None] = []
+    naturals: list[float] = []
+    for i, raw in enumerate(per_tile):
+        if not raw:
+            medians.append(None)
+            continue
+        used = _filter_detections(raw, tiles[i].w, tiles[i].h, cfg,
+                                  label=f"{src_video.name} tile{i}")
+        mx = statistics.median(d[0] for d in used)
+        my = statistics.median(d[1] for d in used)
+        mh = statistics.median(d[2] for d in used)
+        medians.append((mx, my, mh))
+        naturals.append(mh / max(1.0, float(min(tiles[i].w, tiles[i].h))))
+
+    target = spec.face_height_frac
+    if naturals and spec.match_face_size:
+        target = max(target, max(naturals))
+
+    crops: list[gallery.Rect] = []
+    for i, med in enumerate(medians):
+        if med is None:
+            log.warning("%s: no face found in tile %d; centering that panel",
+                        src_video.name, i)
+            crops.append(gallery.center_square_in_tile(tiles[i]))
+            continue
+        mx, my, mh = med
+        crop = gallery.square_crop_in_tile(
+            mx, my, mh, tiles[i],
+            face_height_frac=target,
+            face_target_y=spec.face_target_y(i),
+        )
+        if spec.avoid_badge:
+            crop = gallery.avoid_corner_badge(
+                crop, tiles[i],
+                badge_w_frac=spec.badge_w_frac,
+                badge_h_frac=spec.badge_h_frac,
+            )
+        crops.append(crop)
+
+    log.info("Split-stack %s [%s]: tiles=%s target_face=%.2f crops=%s band=%s",
+             src_video.name, spec.name, [(t.w, t.h) for t in tiles], target,
+             [(c.w, c.x, c.y) for c in crops], layout.caption_band)
+
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-i", str(src_video),
+        "-filter_complex", _split_stack_filtergraph(crops, layout, spec),
+        "-map", "[outv]",
+        # Exactly one audio mapping from the single input, the panels share one
+        # decoded stream, so there is no second copy of the audio to collide.
+        "-map", "0:a?",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-g", "30", "-keyint_min", "30",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        "-movflags", "+faststart",
+        str(out_video),
+    ], check=True, capture_output=True)
+
+    return layout.caption_band
 
 
 def _run_ffmpeg_vf(src_video: Path, out_video: Path, vf: str) -> None:

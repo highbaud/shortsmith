@@ -1,0 +1,35 @@
+{
+  "name": "two-speaker-stack-host-right",
+  "description": "two-speaker-stack with the tiles flipped: the RIGHT-hand gallery tile goes on top, so a host sitting camera-right still leads the stack. Two source-specific fixes over the base preset. (1) Tiles are pinned, not brightness-detected: the guest's dark suit and the host's black studio backdrop drag both tiles under the detector's threshold, which mis-measured them on 35% of sampled frames. Measured geometry is two 955-wide halves either side of a 10px gutter at x=955-964. (2) The pinned tiles stop at y=976, just above the burned-in name pills (measured at y=977-1063 on both tiles), so a crop can never clip one; the base preset's sideways badge dodge cannot help here because these tiles are portrait, leaving no room to slide. face_height_frac is raised to 0.575 so the host's crop, which is large in his tile, still clears that limit without being clamped. Tuned on the Jake Claver / EezyXRPeezy XRP interview, Aug 2026.",
+  "panel": 705,
+  "top_margin": 30,
+  "bottom_margin": 200,
+  "face_height_frac": 0.575,
+  "face_target_y_top": 0.48,
+  "face_target_y_bottom": 0.38,
+  "match_face_size": true,
+  "order": "rl",
+  "dark_threshold": 25.0,
+  "sample_every": 0,
+  "avoid_badge": true,
+  "badge_w_frac": 0.32,
+  "badge_h_frac": 0.16,
+  "border_color": "0xD4AF37@0.85",
+  "border_width": 3,
+  "bg_blur": 25,
+  "bg_dim": 0.3,
+  "tiles": [
+    [
+      0,
+      0,
+      955,
+      976
+    ],
+    [
+      965,
+      0,
+      955,
+      976
+    ]
+  ]
+}

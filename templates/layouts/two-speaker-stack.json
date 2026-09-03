@@ -1,0 +1,26 @@
+{
+  "name": "two-speaker-stack",
+  "description": "Gallery-view interview: both speakers cropped to squares and stacked, first on top, over a blurred backdrop with gold hairlines. Captions sit in the gap between them. Margins keep both faces clear of the platform UI (TikTok's bottom caption zone and top bar). Tuned on the Jake Claver / John Deaton XRP interview, Aug 2026.",
+
+  "panel": 705,
+  "top_margin": 30,
+  "bottom_margin": 200,
+
+  "face_height_frac": 0.30,
+  "face_target_y_top": 0.48,
+  "face_target_y_bottom": 0.38,
+  "match_face_size": true,
+
+  "order": "lr",
+  "dark_threshold": 25.0,
+  "sample_every": 0,
+
+  "avoid_badge": true,
+  "badge_w_frac": 0.32,
+  "badge_h_frac": 0.16,
+
+  "border_color": "0xD4AF37@0.85",
+  "border_width": 3,
+  "bg_blur": 25,
+  "bg_dim": 0.30
+}

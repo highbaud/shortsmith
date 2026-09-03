@@ -225,3 +225,19 @@ def test_no_source_means_no_logo() -> None:
 ])
 def test_extension_follows_the_commons_filename(filename: str, expected: str) -> None:
     assert bl._ext_of(filename) == expected
+
+
+# --- _sniff_ext (the bytes decide the extension, not the filename) ---
+@pytest.mark.parametrize("raw, fallback, expected", [
+    (b"\x89PNG\r\n\x1a\n" + b"\x00" * 32, ".svg", ".png"),
+    (b"\xff\xd8\xff\xe0" + b"\x00" * 32, ".svg", ".jpg"),
+    (b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"/>', ".png", ".svg"),
+    (b"GIF89a" + b"\x00" * 32, ".png", ".png"),
+])
+def test_sniff_ext_reads_the_bytes_not_the_filename(raw: bytes, fallback: str,
+                                                    expected: str) -> None:
+    """Commons' width-resized URL rasterises vector sources, so a P154 filename
+    ending .svg routinely returns PNG bytes. Naming those bytes .svg makes the
+    browser refuse the image and fails the whole Remotion render, not just one
+    slide. Unrecognised bytes keep the filename's extension."""
+    assert bl._sniff_ext(raw, fallback) == expected

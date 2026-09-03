@@ -43,6 +43,18 @@ ENTRY = "src/index.ts"
 COMPOSITION = "Short"
 FPS = 30
 
+# Logo badge on a split-stack short: a mark-only tile on the blurred backdrop
+# beside the top speaker's square. Outside both panels and the caption band by
+# construction, and below every platform's top bar (<0.07 of the height).
+BADGE_SIZE = 120
+BADGE_MIN_SIZE = 72
+BADGE_MARGIN = 24
+BADGE_TOP_CLEAR = 134  # 0.07 * 1920
+
+
+class LayoutPresetError(RuntimeError):
+    """A split-stack clip whose layout preset cannot be loaded."""
+
 # Fallback palette if no style preset resolves.
 DEFAULT_PALETTE = {
     "primary": "#f5c542",
@@ -250,6 +262,116 @@ def _face_aware_band(base_abs: Path, platform: str) -> dict:
     return _choose_band(pct(tops, 0.20), pct(bottoms, 0.80), platform)
 
 
+CAPTION_MAX_WORDS = 3
+CAPTION_FONT_PX = 96
+
+
+def fit_caption_font(band: dict, max_words: int = CAPTION_MAX_WORDS,
+                     height: int = 1920, default: int = CAPTION_FONT_PX) -> int:
+    """Largest caption type size that still fits `max_words` stacked lines
+    inside `band`, never larger than the default.
+
+    Normal shorts have a face on one side of the band and open frame on the
+    other, so an overflowing caption is untidy at worst. A split-stack band has
+    a face on BOTH sides, so it has to fit. Worst case is every word on its own
+    line, which is what this sizes for.
+    """
+    band_px = (float(band["bottom"]) - float(band["top"])) * height
+    usable = band_px - 32  # the 8px top/bottom margin on each word span
+    if max_words <= 0 or usable <= 0:
+        return default
+    return int(max(48, min(default, usable / (max_words * 1.05))))
+
+
+def _split_stack_layout(short_dir: Path):
+    """The saved stacked layout for this short, or None if it is not one.
+
+    A split-stack clip whose preset cannot be loaded is an error, not a
+    fallback: without the geometry the captions would be placed face-aware,
+    which on a stacked frame means on top of one of the two faces.
+    """
+    clip = _clip_for(short_dir)
+    if not clip or str(clip.get("layout", "")).lower() != "split-stack":
+        return None
+    from shortsmith.config import Config
+    from shortsmith.layouts import load_preset
+
+    preset = clip.get("layout_preset") or Config().split_stack_preset
+    try:
+        return load_preset(preset).layout()
+    except (FileNotFoundError, ValueError, KeyError, TypeError) as e:
+        raise LayoutPresetError(
+            f"{short_dir.name}: split-stack layout preset {preset!r} cannot be loaded "
+            f"({e}). Captions would land on a face, so this render stops here. Fix "
+            "templates/layouts/ or the clip's layout_preset.") from e
+
+
+def _logo_badge_anchor(layout) -> dict | None:
+    """Where a logo badge sits on a split-stack short, in px, or None when the
+    backdrop beside the panels is too narrow for a mark."""
+    gutter = layout.top.x
+    size = min(BADGE_SIZE, gutter - 2 * BADGE_MARGIN)
+    if size < BADGE_MIN_SIZE:
+        return None
+    return {"x": (gutter - size) // 2,
+            "y": max(layout.top.y, BADGE_TOP_CLEAR) + BADGE_MARGIN,
+            "size": size}
+
+
+def _is_badge(slide: dict) -> bool:
+    return slide.get("type") == "logo" and slide.get("mode") == "badge"
+
+
+def _clip_caption_band(short_dir: Path) -> dict | None:
+    """Caption band dictated by the clip spec, or None to auto-place it.
+
+    Split-stack shorts put a speaker square at the top AND bottom of the frame,
+    so face-aware placement has nowhere safe to go: it would drop captions onto
+    one of the two faces. The layout already reserves the middle gap for them,
+    so use it. An explicit `caption_band` in the clip spec beats everything.
+    """
+    clip = _clip_for(short_dir)
+    if not clip:
+        return None
+    explicit = clip.get("caption_band")
+    if isinstance(explicit, dict) and "top" in explicit and "bottom" in explicit:
+        return {"top": float(explicit["top"]), "bottom": float(explicit["bottom"])}
+    layout = _split_stack_layout(short_dir)
+    return layout.caption_band if layout else None
+
+
+def _speaker_panels(short_dir: Path) -> list[dict]:
+    """Panel rectangles (top, bottom) for a split-stack short.
+
+    Passed to the template explicitly rather than re-derived there from the
+    caption band: once the layout gained safe-area margins, the band no longer
+    implies where the panels are, and inferring it put the lower name chip on
+    the speaker's forehead.
+    """
+    layout = _split_stack_layout(short_dir)
+    if not layout:
+        return []
+    return [{"x": r.x, "y": r.y, "w": r.w, "h": r.h}
+            for r in (layout.top, layout.bottom)]
+
+
+def _speaker_labels(short_dir: Path) -> list[dict]:
+    """Name chips for a split-stack short, from the clip spec's `speakers` list
+    (top speaker first). Empty for every other layout."""
+    clip = _clip_for(short_dir)
+    if not clip:
+        return []
+    names = clip.get("speakers") or []
+    if not isinstance(names, list):
+        return []
+    positions = ("top", "bottom")
+    return [
+        {"name": str(n).strip(), "position": positions[i]}
+        for i, n in enumerate(names[:2])
+        if str(n).strip()
+    ]
+
+
 def _drop_fillers(words: list[dict]) -> list[dict]:
     """Remove standalone filler interjections (um/uh/…) from caption words so the
     karaoke captions stay clean. The underlying audio is untouched — this only
@@ -361,6 +483,13 @@ def _merge_broll(short_dir: Path, broll_arg: str | None) -> list[dict]:
                 auto = data
         except json.JSONDecodeError:
             print(f"  ! ignoring malformed {auto_path.name}")
+    if auto:
+        # Auto person slides are re-verified here, not trusted: a broll.auto.json
+        # from before identity verification still names a keyword-search photo.
+        # Manual slides are left as written (the escape hatch for a guest with
+        # no Wikidata item). Deferred import: gen_broll imports this module.
+        import gen_broll
+        auto = gen_broll.verify_person_slides(auto, short_dir)
 
     manual = _load_broll(short_dir, broll_arg)
 
@@ -506,7 +635,24 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
     words = _drop_fillers(words)
     overlays = _overlay_windows(short_dir, duration)
     broll = _validate_broll(_merge_broll(short_dir, broll_arg), overlays, duration)
-    band = _face_aware_band(base_abs, platform) if captions else PLATFORM_BANDS.get(platform, PLATFORM_BANDS["generic"])
+    # On a split-stack short the normal logo badge (upper center, sized for a
+    # single speaker with headroom) would sit on the top face. The badge moves
+    # to the blurred backdrop beside the top square instead; if a preset leaves
+    # no room there, badges are dropped and every other slide stays.
+    layout = _split_stack_layout(short_dir)
+    badge_anchor = _logo_badge_anchor(layout) if layout else None
+    if layout and badge_anchor is None and any(_is_badge(s) for s in broll):
+        dropped = sum(1 for s in broll if _is_badge(s))
+        print(f"  split-stack: no backdrop room beside the panels; dropping {dropped} logo badge(s)")
+        broll = [s for s in broll if not _is_badge(s)]
+    clip_band = _clip_caption_band(short_dir)
+    band = clip_band
+    if band is None:
+        band = (_face_aware_band(base_abs, platform) if captions
+                else PLATFORM_BANDS.get(platform, PLATFORM_BANDS["generic"]))
+    # Only shrink type for a clip-dictated band (split-stack). Leaving the
+    # auto-placed bands on the fixed 96px keeps every existing short unchanged.
+    caption_font = (fit_caption_font(band) if clip_band else CAPTION_FONT_PX)
     palette = _resolve_palette(style)
 
     vfx_events = _vfx_events(short_dir, words, duration)
@@ -527,14 +673,19 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
         "captionsEnabled": captions,
         "words": words,
         "captionBand": band,
-        "captionMaxWords": 3,
+        "captionMaxWords": CAPTION_MAX_WORDS,
+        "captionFontSize": caption_font,
         "captionFadeSeconds": 0.2,
         "overlayWindows": overlays,
         "broll": broll,
         "palette": palette,
         "vfxEvents": vfx_events,
         "ambientPunches": ambient_punches,
+        "speakerLabels": _speaker_labels(short_dir),
+        "speakerPanels": _speaker_panels(short_dir),
     }
+    if badge_anchor:
+        props["logoBadgeAnchor"] = badge_anchor
 
     out_path = short_dir / "renders" / output
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -584,9 +735,12 @@ def main() -> None:
     ap.add_argument("--output", default="final_remotion.mp4", help="Output filename in renders/")
     ap.add_argument("--open", action="store_true", help="Open the result when done")
     args = ap.parse_args()
-    render(args.short_dir, captions=args.captions, platform=args.platform,
-           base_mode=args.base_mode, broll_arg=args.broll, output=args.output,
-           style=args.style, open_after=args.open)
+    try:
+        render(args.short_dir, captions=args.captions, platform=args.platform,
+               base_mode=args.base_mode, broll_arg=args.broll, output=args.output,
+               style=args.style, open_after=args.open)
+    except LayoutPresetError as e:
+        sys.exit(str(e))
 
 
 if __name__ == "__main__":
