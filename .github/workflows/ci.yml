@@ -14,14 +14,17 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
-      # setup-uv v6 runs on Node 24 (Node 20 actions are deprecated June 2026)
-      # and accepts `python-version` directly. It installs uv, then provisions
-      # the requested Python via `uv python install` under the hood.
-      - uses: astral-sh/setup-uv@v6
+      # v6 was pinned for Node 24, but the v6 tag actually targets Node 20 and
+      # CI was warning about it on every run. v7 is the release that moved to
+      # Node 24. Nothing between v7 and v10 touches what this workflow uses
+      # (`python-version` and `enable-cache`): the other breaking changes are
+      # `server-url` removal, a new `manifest-file` format, a `prune-cache`
+      # default flip, and caching disabled for sensitive events.
+      - uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.12"
           enable-cache: true
