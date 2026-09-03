@@ -81,9 +81,10 @@ def scan_file(path: Path) -> list[tuple[int, str, str]]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    # Allow an inline opt-out for known-safe lines: comment trailing
-    # `# pragma: allowlist secret` (matches detect-secrets convention) or
-    # `# noqa: secrets` skips that line.
+    # Allow an inline opt-out for known-safe lines: a trailing comment of
+    # "pragma: allowlist secret" (the detect-secrets convention) or
+    # "noqa: secrets" skips that line. Written without the leading hash so
+    # ruff does not read this description as a real (malformed) directive.
     OPTOUT = re.compile(r"#\s*(pragma:\s*allowlist\s*secret|noqa:\s*secrets)\b",
                         re.IGNORECASE)
 

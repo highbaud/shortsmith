@@ -75,6 +75,10 @@ include = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# hyperframes-student-kit is a vendored third-party submodule (someone else's
+# repo, pinned by commit). Linting it fails CI on findings we neither own nor
+# can fix here, and a submodule is not covered by ruff's default excludes.
+extend-exclude = ["hyperframes-student-kit"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
