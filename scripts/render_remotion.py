@@ -480,7 +480,8 @@ def _resolve_palette(style_name: str) -> dict:
     }
 
 
-def _merge_broll(short_dir: Path, broll_arg: str | None) -> list[dict]:
+def _merge_broll(short_dir: Path, broll_arg: str | None,
+                 sources: str | None = None) -> list[dict]:
     """Merge auto (broll.auto.json) + manual (broll.json / --broll) slide lists.
     Manual slides win on time overlap — auto slides that collide with a manual
     one are dropped, so hand edits always take precedence over generated ones."""
@@ -502,6 +503,13 @@ def _merge_broll(short_dir: Path, broll_arg: str | None) -> list[dict]:
         auto = gen_broll.verify_person_slides(auto, short_dir)
 
     manual = _load_broll(short_dir, broll_arg)
+    import source_broll
+
+    try:
+        auto = source_broll.filter_slides(auto, short_dir, sources=sources)
+        manual = source_broll.filter_slides(manual, short_dir, sources=sources)
+    except ValueError as e:
+        raise BrollSpecError(str(e)) from e
 
     def span(s: dict) -> tuple[float, float] | None:
         try:
@@ -536,7 +544,7 @@ def _merge_broll(short_dir: Path, broll_arg: str | None) -> list[dict]:
 # Slides come from an LLM or a hand-written broll.json, so the payload is never
 # guaranteed. Kept in step with remotion/src/Short.tsx `isRenderable`.
 _REQUIRED_FIELD: dict[str, str] = {
-    "text": "title", "list": "items", "logo": "src", "person": "src",
+    "text": "title", "list": "items", "logo": "src", "person": "src", "image": "src",
 }
 
 
@@ -656,7 +664,8 @@ def _ambient_punches(busy: list[dict], duration: float) -> list[float]:
 
 
 def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
-           broll_arg: str | None, output: str, style: str, open_after: bool) -> Path:
+           broll_arg: str | None, output: str, style: str, open_after: bool,
+           sources: str | None = None) -> Path:
     short_dir = short_dir.resolve()
     words_path = short_dir / "assets" / "words.json"
     if captions and not words_path.exists():
@@ -681,7 +690,7 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
     words = json.loads(words_path.read_text(encoding="utf-8")) if words_path.exists() else []
     words = _drop_fillers(words)
     overlays = _overlay_windows(short_dir, duration)
-    broll = _validate_broll(_merge_broll(short_dir, broll_arg), overlays, duration)
+    broll = _validate_broll(_merge_broll(short_dir, broll_arg, sources), overlays, duration)
     # On a split-stack short the normal logo badge (upper center, sized for a
     # single speaker with headroom) would sit on the top face. The badge moves
     # to the blurred backdrop beside the top square instead; if a preset leaves
@@ -760,6 +769,11 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
         if staged_base is not None:
             staged_base.unlink(missing_ok=True)
 
+    source_slides = [s for s in broll if s.get("source_kind")]
+    credits = short_dir / "renders" / "source-credits.json"
+    if source_slides or credits.exists() or sources is not None:
+        credits.write_text(json.dumps({"sources": source_slides}, indent=2, ensure_ascii=True)
+                           + "\n", encoding="utf-8")
     print(f"Done: {out_path}")
     if open_after:
         subprocess.run(["cmd", "/c", "start", "", str(out_path)], check=False)
@@ -767,7 +781,10 @@ def render(short_dir: Path, *, captions: bool, platform: str, base_mode: str,
 
 
 def main() -> None:
+    import source_broll
+
     ap = argparse.ArgumentParser(description="Render a shortsmith short with Remotion (layered on Hyperframes).")
+    source_broll.add_source_argument(ap)
     ap.add_argument("short_dir", type=Path, help="Path to a short-NN-<slug> folder")
     ap.add_argument("--no-captions", dest="captions", action="store_false", help="Render without captions")
     ap.add_argument("--platform", default="generic", choices=sorted(PLATFORM_BANDS),
@@ -785,7 +802,7 @@ def main() -> None:
     try:
         render(args.short_dir, captions=args.captions, platform=args.platform,
                base_mode=args.base_mode, broll_arg=args.broll, output=args.output,
-               style=args.style, open_after=args.open)
+               style=args.style, open_after=args.open, sources=args.sources)
     except (LayoutPresetError, BrollSpecError) as e:
         sys.exit(str(e))
 

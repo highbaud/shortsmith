@@ -24,6 +24,9 @@ from pathlib import Path
 
 from shortsmith.config import AUTO_SHORTS_ROOT, HYPERFRAMES_SPEC, KIT_ROOT, VIDEO_DIR
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from project_selection import select_projects  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -111,7 +114,12 @@ def main() -> int:
         log.info("[%d/%d] pipeline %.0fs", i, len(todo), time.time() - t0)
 
         out_dir = AUTO_SHORTS_ROOT / wd.name
-        projects = sorted(p for p in out_dir.glob("short-*") if p.is_dir()) if out_dir.exists() else []
+        try:
+            projects = select_projects(out_dir, WORK_ROOT)
+        except ValueError as exc:
+            log.error("FAIL project selection %s: %s", wd.name, exc)
+            rfail.append(wd.name)
+            continue
         all_ok = True
         for proj in projects:
             t1 = time.time()
