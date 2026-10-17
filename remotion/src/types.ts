@@ -79,12 +79,28 @@ export type PersonSlide = SlideCommon & {
   motion?: "in" | "out" | "left" | "right" | "up" | "down";
 };
 
+export type ImageSlide = SlideCommon & {
+  type: "image";
+  /** Public-dir-relative photo or screenshot path. */
+  src: string;
+  title?: string;
+  source_label: string;
+  source_url: string;
+  source_kind: "places" | "images" | "press" | "tweets";
+  date: string;
+  attribution?: string;
+  license?: string;
+  /** Keep the complete source visible by default, including tweet author/date. */
+  fit?: "cover" | "contain";
+};
+
 export type BRollSlide =
   | TextSlide
   | StatSlide
   | ListSlide
   | LogoSlide
-  | PersonSlide;
+  | PersonSlide
+  | ImageSlide;
 
 /** Accent palette derived from the short's Hyperframes style preset, so b-roll
  *  slides color-match the overlays. Slides without an explicit `color` fall back

@@ -26,11 +26,15 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
 from shortsmith import sfx
 from shortsmith.config import AUTO_SHORTS_ROOT, Config
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from project_selection import select_projects  # noqa: E402
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -41,6 +45,62 @@ SHORTSMITH_ROOT = Path(__file__).resolve().parent.parent
 WORK_ROOT = SHORTSMITH_ROOT / "work"
 KIT_RENDERS = AUTO_SHORTS_ROOT.parent.parent / "renders"
 ALL_DIR = KIT_RENDERS / "_all"
+
+
+def _hold_exports(paths: Iterator[Path]) -> None:
+    """Move old exports out of _all without deleting or overwriting media."""
+    export_root = ALL_DIR.resolve()
+    render_root = ALL_DIR.parent.resolve()
+    held = ALL_DIR.parent / "_held"
+    held_root = held.resolve()
+    for path in paths:
+        if not path.is_file():
+            continue
+        if held_root.parent != render_root or held_root == export_root:
+            raise RuntimeError(f"Unsafe hold folder: {held}")
+        if path.resolve().parent != export_root:
+            raise RuntimeError(f"Cannot safely hold export outside {ALL_DIR}: {path}")
+        held.mkdir(parents=True, exist_ok=True)
+        target = held / path.name
+        if target.exists() or target.is_symlink():
+            target = held / f"{path.stem}.{uuid.uuid4().hex}{path.suffix}"
+        if target.resolve().parent != held_root:
+            raise RuntimeError(f"Unsafe hold target: {target}")
+        path.rename(target)
+        log.warning("  Held previous export: %s -> %s", path.name, target)
+
+
+def _hold_project_export(source_name: str, project_name: str) -> None:
+    base = f"{source_name}__{project_name}"
+    _hold_exports(ALL_DIR / f"{base}{suffix}" for suffix in (".mp4", ".txt", ".sources.json"))
+
+
+def _current_projects(source_dir: Path) -> list[Path]:
+    """Select current projects and hold exports no longer backed by a pick."""
+    error = None
+    try:
+        projects = select_projects(source_dir, WORK_ROOT)
+    except ValueError as exc:
+        projects, error = [], exc
+    metadata = (WORK_ROOT / source_dir.name / "clips.json", source_dir / "_clips.json")
+    if error is None and not any(p.exists() or p.is_symlink() for p in metadata):
+        return projects  # No picks record can establish that a legacy export was held.
+    allowed = {p.name for p in projects}
+    prefix = f"{source_dir.name}__"
+    stale = []
+    for path in ALL_DIR.iterdir() if ALL_DIR.is_dir() else ():
+        if not path.name.startswith(prefix):
+            continue
+        for suffix in (".sources.json", ".mp4", ".txt"):
+            if path.name.endswith(suffix):
+                project_name = path.name[len(prefix):-len(suffix)]
+                if project_name.startswith("short-") and project_name not in allowed:
+                    stale.append(path)
+                break
+    _hold_exports(iter(stale))
+    if error is not None:
+        raise RuntimeError(str(error)) from error
+    return projects
 
 
 def probe_duration(p: Path) -> float:
@@ -93,16 +153,17 @@ def scoped_projects(slugs: set[str] | None) -> Iterator[tuple[Path, Path]]:
             continue
         if slugs is not None and src_dir.name not in slugs:
             continue
-        for proj in sorted(src_dir.glob("short-*")):
-            if proj.is_dir():
-                yield src_dir, proj
+        for proj in _current_projects(src_dir):
+            yield src_dir, proj
 
 
 def find_render(work_slug: str, rank: int) -> tuple[Path, Path] | None:
     src_dir = AUTO_SHORTS_ROOT / work_slug
     if not src_dir.exists():
         return None
-    for proj in src_dir.glob(f"short-{rank:02d}-*"):
+    for proj in _current_projects(src_dir):
+        if not proj.name.startswith(f"short-{rank:02d}-"):
+            continue
         found = best_render(proj)
         if found:
             return proj, found
@@ -149,7 +210,7 @@ def _disk_guard(min_warn_gb: float = 20.0, min_abort_gb: float = 5.0) -> None:
 
 
 def phase0_remotion(style: str, force: bool = False,
-                    slugs: set[str] | None = None) -> int:
+                    slugs: set[str] | None = None, sources: str | None = None) -> int:
     """Layer Remotion captions + auto b-roll onto every scaffolded short.
 
     When `slugs` is given, only source folders whose name is in the set are
@@ -164,10 +225,15 @@ def phase0_remotion(style: str, force: bool = False,
         return 0
     _clear_remotion_cache()  # once per run, before the first render bundles
     ar.reset_stats()
+    import source_broll
+
     applied = skipped = 0
+    source_failures = []
     for _src_dir, proj in scoped_projects(slugs):
+        controlled = (sources is not None or (proj / source_broll.MANIFEST).exists()
+                      or bool(os.environ.get("SHORTSMITH_BROLL_SOURCES", "").strip()))
         try:
-            out = ar.apply_remotion(proj, style=style, force=force)
+            out = ar.apply_remotion(proj, style=style, force=force, sources=sources)
         except Exception as e:  # noqa: BLE001 - one short shouldn't sink the run
             log.warning("  Remotion failed for %s: %s", proj.name, e)
             out = None
@@ -177,6 +243,8 @@ def phase0_remotion(style: str, force: bool = False,
                 log.info("  Remotion applied to %d shorts so far...", applied)
         else:
             skipped += 1
+            if controlled:
+                source_failures.append(proj.name)
     stats = ar.RUN_STATS
     log.info("Phase 0 done: rendered=%d current=%d legacy(untouched)=%d skipped(no base)=%d "
              "b-roll failures=%d", stats["rendered"], stats["current"],
@@ -188,11 +256,16 @@ def phase0_remotion(style: str, force: bool = False,
     if stats["broll_failures"]:
         log.warning("  %d short(s) rendered with a stale or empty b-roll list because "
                     "generation failed; see the '!!' lines above.", stats["broll_failures"])
+    if source_failures:
+        raise RuntimeError("Source settings could not be applied to: "
+                           + ", ".join(source_failures)
+                           + ". Old videos were not copied to the final folder.")
     return applied
 
 
 def phase1_sfx(cfg: Config, sfx_map, slugs: set[str] | None = None) -> int:
     applied = skipped = 0
+    failed = []
     for wd in sorted(WORK_ROOT.iterdir()):
         if not wd.is_dir():
             continue
@@ -228,14 +301,25 @@ def phase1_sfx(cfg: Config, sfx_map, slugs: set[str] | None = None) -> int:
             rdir = proj / "renders"
             rdir.mkdir(parents=True, exist_ok=True)
             tmp, out = rdir / "_sfx_tmp.mp4", rdir / "final_sfx.mp4"
-            if sfx.apply_sfx(final, events, sfx_map, tmp, cfg):
-                tmp.replace(out)
+            try:
+                mixed = sfx.apply_sfx(final, events, sfx_map, tmp, cfg)
+                if mixed:
+                    tmp.replace(out)
+            except (OSError, subprocess.SubprocessError) as exc:
+                log.error("  SFX failed for %s: %s", proj.name, exc)
+                mixed = False
+            if mixed:
                 applied += 1
             else:
+                _hold_project_export(wd.name, proj.name)
                 tmp.unlink(missing_ok=True)
+                failed.append(f"{wd.name}/{proj.name}")
         if applied and applied % 50 == 0:
             log.info("  SFX applied to %d shorts so far...", applied)
     log.info("Phase 1 done: SFX applied=%d, skipped(no render)=%d", applied, skipped)
+    if failed:
+        raise RuntimeError("SFX failed for: " + ", ".join(failed)
+                           + ". Previous exports were held; retry or use --skip-sfx.")
     return applied
 
 
@@ -255,7 +339,7 @@ def _qa_streams(p: Path) -> tuple[bool, int, int]:
 
 
 def phase2_consolidate(slugs: set[str] | None = None,
-                       allow_unmixed: bool = False) -> int:
+                       allow_unmixed: bool = False, sources: str | None = None) -> int:
     """Copy every deliverable into _all/.
 
     `allow_unmixed` is what --skip-sfx promises: with no SFX phase there is no
@@ -264,9 +348,19 @@ def phase2_consolidate(slugs: set[str] | None = None,
     run consolidated nothing and still reported success.
     """
     ALL_DIR.mkdir(parents=True, exist_ok=True)
-    copied = bad = 0
+    copied = 0
+    bad = []
+    stale = []
     for src_dir, proj in scoped_projects(slugs):
         sfx_mp4 = proj / "renders" / "final_sfx.mp4"
+        current = best_render(proj)
+        if allow_unmixed and current is not None:
+            sfx_mp4 = current
+        elif (current is not None and sfx_mp4.exists()
+              and sfx_mp4.stat().st_mtime_ns < current.stat().st_mtime_ns):
+            stale.append(proj.name)
+            _hold_project_export(src_dir.name, proj.name)
+            continue
         if not sfx_mp4.exists():
             if not allow_unmixed:
                 continue
@@ -280,24 +374,41 @@ def phase2_consolidate(slugs: set[str] | None = None,
         # QA: a deliverable must have audio and be a 1080x1920 vertical video.
         has_audio, w, h = _qa_streams(sfx_mp4)
         if not has_audio or (w, h) != (1080, 1920):
-            log.warning("  QA FAIL %s: has_audio=%s dims=%dx%d (still consolidating)",
+            log.error("  QA FAIL %s: has_audio=%s dims=%dx%d (not exported)",
                         base, has_audio, w, h)
-            bad += 1
+            bad.append(base)
+            _hold_project_export(src_dir.name, proj.name)
+            continue
         shutil.copy(sfx_mp4, ALL_DIR / f"{base}.mp4")
         cap = proj / "caption.txt"
         if cap.exists():
             shutil.copy(cap, ALL_DIR / f"{base}.txt")
+        credits = proj / "renders" / "source-credits.json"
+        if credits.is_file():
+            shutil.copy(credits, ALL_DIR / f"{base}.sources.json")
         copied += 1
-    log.info("Phase 2 done: consolidated %d shorts -> %s (%d QA warnings)",
-             copied, ALL_DIR, bad)
+    log.info("Phase 2 done: consolidated %d shorts -> %s (%d failed QA)",
+             copied, ALL_DIR, len(bad))
+    failures = []
+    if stale:
+        failures.append("The sound-effect video is stale for: " + ", ".join(stale)
+                        + ". Re-run, or use --skip-sfx.")
+    if bad:
+        failures.append("QA failed for: " + ", ".join(bad)
+                        + ". Fix the audio/frame size before exporting.")
+    if failures:
+        raise RuntimeError(" ".join(failures) + " Previous exports were held.")
     return copied
 
 
 def main() -> int:
     import argparse
+
+    import source_broll
     ap = argparse.ArgumentParser(
         description="Final-version pass: Remotion -> SFX -> consolidate."
     )
+    source_broll.add_source_argument(ap)
     ap.add_argument(
         "--skip-remotion", action="store_true",
         help="Skip Phase 0 (captions + b-roll). Use when Remotion / Node / "
@@ -326,6 +437,13 @@ def main() -> int:
              "single batch without re-touching the whole library. Omit for all.",
     )
     args = ap.parse_args()
+    if args.sources is not None:
+        try:
+            source_broll.parse_sources(args.sources)
+        except ValueError as e:
+            ap.error(str(e))
+        if args.skip_remotion:
+            ap.error("--sources needs the Remotion phase; remove --skip-remotion")
     slugs = set(args.slug) if args.slug else None
     if slugs:
         log.info("Scoped finalize to slugs: %s", ", ".join(sorted(slugs)))
@@ -349,14 +467,26 @@ def main() -> int:
     if args.skip_remotion:
         log.info("Phase 0 skipped (--skip-remotion). SFX/consolidate will use Hyperframes base renders.")
     else:
-        phase0_remotion(style, force=args.force_remotion, slugs=slugs)
+        try:
+            phase0_remotion(style, force=args.force_remotion, slugs=slugs, sources=args.sources)
+        except (OSError, RuntimeError, ValueError) as e:
+            log.error("%s", e)
+            return 1
 
     if args.skip_sfx:
         log.info("Phase 1 skipped (--skip-sfx). Going straight to consolidation.")
     else:
-        phase1_sfx(cfg, sfx_map, slugs=slugs)
+        try:
+            phase1_sfx(cfg, sfx_map, slugs=slugs)
+        except (OSError, RuntimeError, ValueError) as e:
+            log.error("%s", e)
+            return 1
 
-    n = phase2_consolidate(slugs=slugs, allow_unmixed=args.skip_sfx)
+    try:
+        n = phase2_consolidate(slugs=slugs, allow_unmixed=args.skip_sfx, sources=args.sources)
+    except (OSError, RuntimeError, ValueError) as e:
+        log.error("%s", e)
+        return 1
     log.info("FINALIZE COMPLETE. %d shorts consolidated to %s", n, ALL_DIR)
     return 0
 

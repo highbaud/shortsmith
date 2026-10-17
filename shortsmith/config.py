@@ -87,15 +87,13 @@ def hyperframes_cmd(*args: str) -> list[str]:
 DEFAULT_FILLERS = [
     # Pure stammers — never content.
     "um", "uh", "uhm", "erm", "mm",
-    # Discourse fillers that are almost always filler in conversational
-    # podcast speech.
-    "you know",
     # NOT in this list (too often content words — chopping them sounds wrong):
     #   "like"        — verb, preposition, simile marker
     #   "basically"   — sometimes a real adverb
     #   "literally"   — sometimes a real adverb
     #   "sort of" / "kind of" — softeners but often meaningful
     #   "right?"      — tag question, often a real beat
+    #   "you know": content in questions such as "How do you know?"
 ]
 
 @dataclass
@@ -114,6 +112,11 @@ class Config:
     # "ollama" (local OpenAI-compatible endpoint, free, experimental, requires
     # a running Ollama / LM Studio / vLLM server).
     clip_engine: str = os.environ.get("SHORTSMITH_CLIP_ENGINE", "anthropic")
+    # A second pass checks retained speech against omitted source context.
+    story_check: bool = field(default_factory=lambda: (
+        os.environ.get("SHORTSMITH_STORY_CHECK", "on").lower()
+        not in ("off", "0", "false", "no")
+    ))
 
     # Anthropic
     anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))

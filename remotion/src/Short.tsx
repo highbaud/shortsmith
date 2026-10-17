@@ -276,7 +276,7 @@ function ambientPunchScale(t: number, punches: number[], peak = 1.045): number {
 
 /** True when a slide carries the fields its card actually reads. The slide list
  *  is hand-authored or LLM-generated JSON and only its start/end are checked on
- *  the Python side, so a `list` with no `items` or a `logo`/`person` with no
+ *  the Python side, so a `list` with no `items` or an image-based slide with no
  *  `src` arrives intact and takes the whole render down (`.map` of undefined,
  *  `staticFile(undefined)`). A `text` with no title or a `stat` with no number
  *  survives, but hides the base video behind a blank card, which is worse than
@@ -291,6 +291,7 @@ function isRenderable(slide: BRollSlide): boolean {
       return Array.isArray(slide.items) && slide.items.length > 0;
     case "logo":
     case "person":
+    case "image":
       return Boolean(slide.src);
   }
 }

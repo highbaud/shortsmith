@@ -102,6 +102,7 @@ def library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (proj / "renders").mkdir(parents=True)
     (proj / "renders" / "final_remotion.mp4").write_bytes(b"mp4")
     monkeypatch.setattr(finalize, "AUTO_SHORTS_ROOT", auto)
+    monkeypatch.setattr(finalize, "WORK_ROOT", tmp_path / "work")
     monkeypatch.setattr(finalize, "KIT_RENDERS", tmp_path / "renders")
     monkeypatch.setattr(finalize, "ALL_DIR", tmp_path / "renders" / "_all")
     monkeypatch.setattr(finalize, "_qa_streams", lambda p: (True, 1080, 1920))
