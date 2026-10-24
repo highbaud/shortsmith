@@ -15,6 +15,9 @@ from pathlib import Path
 
 from shortsmith.config import AUTO_SHORTS_ROOT, HYPERFRAMES_SPEC, KIT_ROOT, VIDEO_DIR
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from project_selection import select_projects  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
@@ -110,7 +113,12 @@ def main() -> int:
         if not out_dir.exists():
             log.warning("No output dir at %s", out_dir)
             continue
-        projects = sorted(p for p in out_dir.glob("short-*") if p.is_dir())
+        try:
+            projects = select_projects(out_dir, WORK_ROOT)
+        except ValueError as exc:
+            log.error("FAIL project selection %s: %s", wd.name, exc)
+            render_fail.append(wd.name)
+            continue
         log.info("[%d/%d] rendering %d projects", i, len(todo), len(projects))
         for proj in projects:
             t1 = time.time()

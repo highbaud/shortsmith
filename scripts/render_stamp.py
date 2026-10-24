@@ -36,6 +36,8 @@ CODE_GLOBS = (
     "scripts/render_remotion.py", "scripts/render_stamp.py",
     "scripts/apply_remotion.py", "scripts/gen_broll.py",
     "scripts/person_photos.py", "scripts/brand_logos.py", "scripts/wikidata.py",
+    "scripts/source_broll.py", "scripts/source_capture.py", "scripts/source_discovery.py",
+    "scripts/capture_source.mjs",
     "shortsmith/vfx.py", "shortsmith/layouts.py", "shortsmith/gallery.py",
     "shortsmith/names.py", "shortsmith/sfx.py", "shortsmith/config.py",
     "templates/layouts/*.json", "templates/styles/*/style.json",
@@ -84,8 +86,8 @@ def people_digest(words: list[dict]) -> str:
         parts.append(json.dumps({
             "name": name,
             "manifest": manifest.get(name),
-            "manual": f"{manual.name}:{manual.stat().st_size}" if manual else "",
-            "cached": f"{cached.name}:{cached.stat().st_size}" if cached else "",
+            "manual": f"{manual.name}:{_file_digest(manual)}" if manual else "",
+            "cached": f"{cached.name}:{_file_digest(cached)}" if cached else "",
         }, sort_keys=True))
     return _digest("\n".join(parts).encode("utf-8"))
 
@@ -101,8 +103,30 @@ def _file_stat(path: Path) -> str:
     return f"{st.st_size}:{st.st_mtime_ns}"
 
 
+def source_assets_digest(project_dir: Path, enabled: frozenset[str]) -> str:
+    """Include the active source slides and their local pixels in cache decisions."""
+    entries = []
+    root = project_dir.resolve()
+    for name in ("broll.auto.json", "broll.json"):
+        try:
+            slides = json.loads((project_dir / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(slides, list):
+            continue
+        for slide in slides:
+            if not isinstance(slide, dict) or slide.get("source_kind") not in enabled:
+                continue
+            asset = (root / str(slide.get("src", ""))).resolve()
+            pixels = _file_digest(asset) if asset.is_relative_to(root) else ""
+            entries.append({"slide": slide, "pixels": pixels})
+    return _digest(json.dumps(entries, sort_keys=True).encode("utf-8"))
+
+
 def compute_stamp(project_dir: Path, *, base: Path, style: str, platform: str,
-                  captions: bool) -> dict:
+                  captions: bool, sources: str | None = None) -> dict:
+    import source_broll
+
     project_dir = Path(project_dir)
     words_path = project_dir / "assets" / "words.json"
     try:
@@ -110,6 +134,7 @@ def compute_stamp(project_dir: Path, *, base: Path, style: str, platform: str,
     except (json.JSONDecodeError, OSError):
         words = []
     clip = _clip_for(project_dir) or {}
+    enabled = source_broll.enabled_sources(project_dir, sources)
     inputs = {
         "base": _file_stat(base),
         "words": _file_digest(words_path),
@@ -120,6 +145,10 @@ def compute_stamp(project_dir: Path, *, base: Path, style: str, platform: str,
         "style": style,
         "platform": platform,
         "captions": captions,
+        "source_options": sorted(enabled),
+        "source_spec": _file_digest(project_dir / "broll.sources.json"),
+        "source_provenance": _file_digest(project_dir / "broll.sources.provenance.json"),
+        "source_assets": source_assets_digest(project_dir, enabled),
     }
     payload = json.dumps(inputs, sort_keys=True).encode("utf-8")
     return {"version": STAMP_VERSION, "digest": _digest(payload), "inputs": inputs}

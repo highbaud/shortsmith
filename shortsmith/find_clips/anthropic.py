@@ -54,3 +54,46 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
 
     raw = resp.content[0].text  # type: ignore[attr-defined]
     return parse_json_response(raw)
+
+
+def review(system_prompt: str, user_input: str, cfg: Config) -> list[dict]:
+    """Run a separate story check and require a complete review response."""
+    import anthropic
+
+    if not cfg.anthropic_api_key:
+        raise RuntimeError("Story check needs ANTHROPIC_API_KEY, or use --clip-engine ollama.")
+
+    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
+    try:
+        resp = client.messages.create(
+            model=cfg.claude_model,
+            max_tokens=cfg.clip_max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_input}],
+        )
+    except Exception as exc:
+        raise RuntimeError("Story check: Claude request failed. Check the API connection and retry.") from exc
+
+    stop_reason = getattr(resp, "stop_reason", None)
+    if stop_reason != "end_turn":
+        advice = (
+            "Raise SHORTSMITH_CLIP_MAX_TOKENS and retry."
+            if stop_reason == "max_tokens"
+            else "Retry the story check."
+        )
+        raise RuntimeError(f"Story check: Claude response did not finish ({stop_reason}). {advice}")
+
+    content = getattr(resp, "content", None)
+    if not isinstance(content, list):
+        raise RuntimeError("Story check: Claude returned invalid JSON. Retry the story check.")
+    raw = "\n".join(
+        block.text for block in content
+        if getattr(block, "type", None) == "text" and isinstance(getattr(block, "text", None), str)
+    )
+    try:
+        reviews = parse_json_response(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Story check: Claude returned invalid JSON. Retry the story check.") from exc
+    if not isinstance(reviews, list) or not reviews:
+        raise RuntimeError("Story check: Claude returned no reviews. Retry the story check.")
+    return reviews

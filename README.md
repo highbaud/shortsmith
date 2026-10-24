@@ -70,7 +70,10 @@ See [docs/SETUP.md](docs/SETUP.md) for per-OS install, CUDA torch matrix, model 
 
 ## Cost note (clip selection)
 
-Step 2 calls an LLM once per source video with the full transcript:
+Step 2 calls an LLM to select clips, then makes a second call to check their
+stories against the full transcript. Both calls use the selected clip engine.
+The estimates below cover selection only. Story check adds a second transcript
+read and its review output. Use `--no-story-check` to skip that call.
 
 | Source length | Approx. cost | Free alternative |
 |---|---|---|
@@ -92,9 +95,27 @@ Switch backends with `--clip-engine ollama` or `SHORTSMITH_CLIP_ENGINE=ollama`. 
 
 **2. Find viral clips** — Claude (or local LLM) reads the transcript and returns a `clips.json` with `viral_score`, `hook_text`, `callouts`, `instagram_caption`, and a `segments` list that can reorder a clip to lead with the hook.
 
+A separate story check then reads the kept speech in playback order beside the
+source speech. It checks for missing setup, weak endings, and cuts that change
+the speaker's meaning. It reviews the speech expected after cutting, filler
+removal, and stutter repair. The cutter and cleaner check the saved word set
+against the actual timing. If a later edit changes it, the run stops for a new
+check. Generated
+titles and viral scores are withheld from this review. Only clips marked `pass`
+continue. Rejected or uncertain clips stay in `story_review.json` with their
+original clip data, reasons, and source quotes. Missing or invalid model evidence
+holds the clip for review. A failed model call stops the run before replacing
+`clips.json`. A changed report saves the prior version in `story_review_history/`,
+so a recheck of passing clips cannot erase held picks. This is a model judgment,
+not a fact check or a promise of views.
+
 **3. Cut + reorder** — ffmpeg cuts with tiered boundary snap (sentence-end → breath → any-gap). `prefer_after=True` on the end-of-clip snap so we extend forward to a clean sentence end instead of chopping a thought. 80 ms xfade at every reorder seam.
 
-**4. Clean** — word-aware. Removes fillers (only pure stammers + "you know" by default; "like" / "basically" / "literally" left alone), collapses adjacent stutters (e.g. `I-I-I think` → `I think`), and trims silences > 0.8s. Cuts never land inside a word.
+**4. Clean**. Removes pure fillers, collapses adjacent stutters (for example,
+`I-I-I think` becomes `I think`), and trims silences longer than 0.8 seconds.
+The default preserves `you know`, `like`, `basically`, and `literally`.
+Word timing includes crossfade overlap and measured segment lengths, so cleanup
+uses the same timeline as the audio.
 
 **5. Enhance audio** — ClearerVoice MossFormer2_SE_48K in a sibling uv venv. Two-pass ffmpeg `loudnorm` to **-14 LUFS** (TikTok / Instagram / YouTube short-form playback standard).
 
@@ -112,6 +133,13 @@ Switch backends with `--clip-engine ollama` or `SHORTSMITH_CLIP_ENGINE=ollama`. 
 
 **Consolidation** — `scripts/finalize.py` runs all three render phases and copies `final_sfx.mp4` + matching `caption.txt` into `<kit>/renders/_all/<source>__<short>.{mp4,txt}` with a flat naming scheme. Idempotent — safe to re-run.
 
+Finishing selects projects from the current `work/<source>/clips.json`, then the
+scaffold's `_clips.json`. Old projects removed from those picks are held. Previous
+exports of removed, stale, or invalid clips are kept in `<kit>/renders/_held/`.
+A failed sound mix or output check stops the run with an error. `--skip-sfx`
+exports the current best video directly. Existing projects without pick metadata
+keep the legacy folder selection.
+
 A short re-renders only when something it depends on changed. `scripts/render_stamp.py` records a digest of every input beside each render (the base video, the clip spec, the words, the manual b-roll list, the photo state of every person the words name, the render code, and the style / platform / captions switches), and `apply_remotion` compares it before rendering again. A short rendered before stamps existed keeps the old rule (newer than its base render) until `--force-remotion` rebuilds it, so an unscoped finalize never rebuilds the whole library by surprise; the phase summary says how many such shorts it left alone.
 
 ## Configuration
@@ -122,6 +150,7 @@ All paths and tunables override via env vars or a project-local `.env` (auto-loa
 |---|---|---|
 | `ANTHROPIC_API_KEY` | (required for anthropic engine) | Claude API key |
 | `SHORTSMITH_CLIP_ENGINE` | `anthropic` | `anthropic` (Claude API) / `ollama` (local LLM) |
+| `SHORTSMITH_STORY_CHECK` | `on` | Check new picks for a complete story; `off` skips the second model call |
 | `SHORTSMITH_STYLE` | `xrp-revolution` | `xrp-revolution` / `minimal` / `bold` |
 | `SHORTSMITH_ENHANCE` | `clearvoice` | Audio enhancement engine |
 | `SHORTSMITH_ALIGN` | `whisperx` | Word alignment (`whisperx` / `faster-whisper`) |
@@ -154,6 +183,16 @@ uv run shortsmith run path/to/video.mp4 --no-enhance
 # Free clip selection via local LLM
 uv run shortsmith run path/to/video.mp4 --clip-engine ollama
 
+# Turn story check off or on for new picks
+uv run shortsmith run path/to/video.mp4 --no-story-check
+uv run shortsmith run path/to/video.mp4 --story-check
+
+# Check saved picks before cutting. Held picks move to story_review.json.
+uv run shortsmith run path/to/video.mp4 --from-step 3 --story-check
+
+# Check existing picks and write a report without changing clips.json or media
+uv run shortsmith story-check path/to/work-folder --clip-engine ollama
+
 # Different visual style
 uv run shortsmith run path/to/video.mp4 --style minimal
 
@@ -172,6 +211,30 @@ uv run python scripts/gen_broll.py --audit-brands
 ```
 
 For batch operations across many source videos, see [`scripts/batch_pipeline.py`](scripts/batch_pipeline.py) and [`scripts/reprocess_all.py`](scripts/reprocess_all.py).
+
+Normal resumes reuse saved picks and do not repeat the model call. To recheck
+edited picks, use `--from-step 3 --story-check`. Changes to reviewed source words
+or cut points require a new check before cutting. `--no-story-check` skips this
+guard. The check does not rewrite speech, extend cuts, or change overlay timing.
+
+## Optional source B-roll
+
+Add verified place photos, reference images, press-release screenshots, and public
+X post screenshots. Each source can be switched on or off. New sources default to
+off; existing people and logo B-roll stays the same.
+
+```bash
+# Choose sources for a single batch (replace SOURCE_SLUG with your source folder).
+uv run python scripts/finalize.py --slug SOURCE_SLUG --sources "places,images,press"
+
+# Turn all new sources on, or turn them all off.
+uv run python scripts/finalize.py --slug SOURCE_SLUG --sources all
+uv run python scripts/finalize.py --slug SOURCE_SLUG --sources off
+```
+
+Save a default with `SHORTSMITH_BROLL_SOURCES` in `.env`, or save a choice for each
+short in `broll.sources.json`. Switching a source off also removes its cached
+slides from new renders. [Setup, source checks, and examples](docs/BROLL-SOURCES.md).
 
 ## Multicam / two-speaker sources
 

@@ -75,6 +75,9 @@ def shift_words_to_zero(words: list[dict], reference_start: float) -> list[dict]
 def slice_words_for_segments(
     source_words: list[dict],
     segments: list[list[float]],
+    *,
+    xfade_seconds: float = 0.0,
+    segment_durations: list[float] | None = None,
 ) -> list[dict]:
     """Slice source-video transcript to a clip's local timeline.
 
@@ -82,21 +85,24 @@ def slice_words_for_segments(
     step concatenated (in order — may be physically reordered). For each
     segment, take all source words that fall ENTIRELY within (start, end),
     then re-time them to the local clip timeline (segment 0 starts at t=0,
-    segment 1 starts at t=sum_of_prior_segment_durations, etc.).
+    segment 1 starts after the measured first duration minus its crossfade).
 
     Words that straddle a segment boundary are dropped — keeping them would
     create overlap with the next segment's first word.
     """
     out: list[dict] = []
     cumulative_offset = 0.0
-    for seg in segments:
+    if segment_durations is not None and len(segment_durations) != len(segments):
+        raise ValueError("segment durations must match the cut segments")
+    for index, seg in enumerate(segments):
         seg_start, seg_end = float(seg[0]), float(seg[1])
-        seg_duration = seg_end - seg_start
+        seg_duration = (segment_durations[index] if segment_durations is not None
+                        else seg_end - seg_start)
         for w in source_words:
             ws = float(w["start"])
             we = float(w["end"])
             # Require the word to be fully inside this segment
-            if ws >= seg_start and we <= seg_end:
+            if ws >= seg_start and we <= min(seg_end, seg_start + seg_duration):
                 local_start = (ws - seg_start) + cumulative_offset
                 local_end = (we - seg_start) + cumulative_offset
                 out.append({
@@ -104,5 +110,5 @@ def slice_words_for_segments(
                     "start": round(local_start, 3),
                     "end": round(local_end, 3),
                 })
-        cumulative_offset += seg_duration
+        cumulative_offset += seg_duration - (xfade_seconds if index < len(segments) - 1 else 0)
     return out

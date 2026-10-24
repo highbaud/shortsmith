@@ -64,6 +64,13 @@ Both prompts also carry a **performance calibration** block (`shortsmith/find_cl
 
 ### Step 3: Cut + reorder
 
+New picks pass through story check by default before `clips.json` is written.
+An explicit `--from-step 3 --story-check` rechecks saved picks and records every
+decision in `story_review.json`. It sends only passing clips through that run and
+keeps the saved `clips.json` unchanged. Finalize uses that saved plan to select
+existing exports. When story check is off, transcript overlaps and blank word
+text do not trigger the strict story boundary checks; invalid times still fail.
+
 `shortsmith/cut_clips.py`. ffmpeg with **tiered, asymmetric boundary snap**. Each cut point gets snapped to the nearest acceptable boundary:
 
 - **Tier 0**: sentence-end punctuation + ≥ 200 ms silence

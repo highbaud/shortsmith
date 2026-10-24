@@ -95,6 +95,9 @@ def transcribe_only(video: Path) -> None:
               help="Visual style preset (templates/styles/<name>/). Built-in: xrp-revolution, minimal, bold. Default: xrp-revolution.")
 @click.option("--clip-engine", type=click.Choice(["anthropic", "ollama"]), default=None,
               help="Clip-selection backend. anthropic=Claude API (best, costs ~$0.10-$2/video). ollama=local LLM (free, experimental, lower quality).")
+@click.option("--story-check/--no-story-check", default=None,
+              help="Check new picks for missing setup, weak endings, and changed meaning. "
+                   "Default on. Use --from-step 3 --story-check to check saved picks.")
 @click.option("--cut-aware/--no-cut-aware", default=None,
               help="Reframe multicam/two-speaker footage by detecting camera cuts and "
                    "framing each shot's speaker independently. Default off (single static "
@@ -109,10 +112,15 @@ def transcribe_only(video: Path) -> None:
                    "(templates/layouts/<name>.json). Default: two-speaker-stack.")
 def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         engine: str | None, min_score: int | None, style: str | None,
-        clip_engine: str | None, cut_aware: bool | None, layout: str | None,
+        clip_engine: str | None, story_check: bool | None, cut_aware: bool | None, layout: str | None,
         layout_preset: str | None) -> None:
     """Run the full pipeline on a single source video."""
     _setup_logging()
+    if story_check is True and from_step > 3:
+        raise click.UsageError(
+            "Use --from-step 3 --story-check to check saved picks before cutting, "
+            "or shortsmith story-check WORK_DIR for a report only."
+        )
 
     # First-run wizard: ask once for clip engine + style if env is unset.
     if _wizard.needs_wizard(from_step) and not clip_engine and not style:
@@ -127,6 +135,8 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         cfg.style = style
     if clip_engine:
         cfg.clip_engine = clip_engine
+    if story_check is not None:
+        cfg.story_check = story_check
     if cut_aware is not None:
         cfg.reframe_cut_aware = cut_aware
     if layout:
@@ -136,7 +146,7 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
 
     problems = cfg.validate()
     # Filter problems by what the upcoming steps actually need.
-    needs_api_key = from_step <= 2
+    needs_api_key = from_step <= 2 or (from_step == 3 and story_check is True)
     needs_audio_enhance = enhance and from_step <= 5 and cfg.enhance_engine == "clearvoice"
     needs_kit = from_step <= 8  # scaffold targets kit; final step always runs
     if not needs_api_key:
@@ -170,19 +180,33 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
     # ---- Step 2: find clips ----
     if from_step <= 2:
         t0 = time.time()
-        log.info("Step 2: finding viral clips via Claude")
-        clips = find_clips.find_clips(words, clips_path, cfg)
+        log.info("Step 2: finding clips via %s (story check %s)",
+                 cfg.clip_engine, "on" if cfg.story_check else "off")
+        try:
+            clips = find_clips.find_clips(words, clips_path, cfg)
+        except (RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
         log.info("Step 2 done (%.1fs, %d clips)", time.time() - t0, len(clips))
     else:
         clips = json.loads(clips_path.read_text(encoding="utf-8"))
         log.info("Step 2 skipped — loaded %d clips from %s", len(clips), clips_path)
+        if story_check is True:
+            try:
+                clips = find_clips.check_stories(
+                    clips, words, work_dir / "story_review.json", cfg,
+                )
+                # Filter this run only. The saved picks also select existing
+                # exports in finalize; a recheck must not replace that plan.
+            except (RuntimeError, ValueError) as exc:
+                raise click.ClickException(str(exc)) from exc
 
     if max_clips:
         clips = clips[:max_clips]
         log.info("Capped to first %d clips for this run", len(clips))
 
     if not clips:
-        log.error("No clips to process — aborting")
+        log.error("No clips to process. If story check ran, see %s for held clips.",
+                  work_dir / "story_review.json")
         sys.exit(1)
 
     # ---- Step 3: cut ----
@@ -246,6 +270,28 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
     log.info("Output: %s", config.make_output_dir(video))
     log.info("Try:  cd %s/short-01-* && npx %s preview",
              config.make_output_dir(video), config.HYPERFRAMES_SPEC)
+
+
+@cli.command(name="story-check")
+@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--clip-engine", type=click.Choice(["anthropic", "ollama"]), default=None)
+def story_check_cmd(work_dir: Path, clip_engine: str | None) -> None:
+    """Check saved clips.json against transcript.json. Write a report only."""
+    _setup_logging()
+    cfg = config.Config()
+    if clip_engine:
+        cfg.clip_engine = clip_engine
+    try:
+        clips = json.loads((work_dir / "clips.json").read_text(encoding="utf-8"))
+        words = transcribe.load_words(work_dir / "transcript.json")
+        report_path = work_dir / "story_review.json"
+        approved = find_clips.check_stories(clips, words, report_path, cfg)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"{len(approved)}/{len(clips)} clips passed. Report: {report_path}")
+    click.echo("clips.json was not changed.")
+    if len(approved) != len(clips):
+        raise click.ClickException("Some clips were held. Read the report before cutting.")
 
 
 def _save_manifests(manifests: list[dict], work_dir: Path) -> None:

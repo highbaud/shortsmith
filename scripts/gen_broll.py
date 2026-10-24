@@ -928,8 +928,12 @@ def audit_brands(brands: list[str] | None = None) -> int:
 
 
 def generate(short_dir: Path, *, heuristic: bool, cap: int, dry_run: bool,
-             photo_seed: int | None = None, fresh_photo: bool = False) -> Path | None:
+             photo_seed: int | None = None, fresh_photo: bool = False,
+             sources: str | None = None) -> Path | None:
+    import source_broll
+
     short_dir = short_dir.resolve()
+    enabled = source_broll.enabled_sources(short_dir, sources)
     words = _load_words(short_dir)
     duration = _duration(short_dir)
     overlays = _overlay_windows(short_dir, duration)
@@ -953,8 +957,18 @@ def generate(short_dir: Path, *, heuristic: bool, cap: int, dry_run: bool,
         raw = _gen_heuristic(words, gaps, cap)
 
     slides = drop_on_camera_people(_normalize(raw, gaps), on_camera_names(short_dir))[:cap]
+    source_slides = []
+    if enabled:
+        source_slides = source_broll.generate(short_dir, words, gaps,
+                                              sources=sources, dry_run=dry_run)
+        slides = [s for s in slides if not any(
+            s["start"] < extra["end"] and s["end"] > extra["start"]
+            for extra in source_slides)]
     slides = _resolve_assets(slides, short_dir, dry_run, photo_seed=photo_seed,
                              fresh_photo=fresh_photo)
+    if source_slides:
+        slides += source_slides
+        slides.sort(key=lambda s: s["start"])
 
     print(f"  -> {len(slides)} slide(s):")
     for s in slides:
@@ -972,7 +986,10 @@ def generate(short_dir: Path, *, heuristic: bool, cap: int, dry_run: bool,
 
 
 def main() -> None:
+    import source_broll
+
     ap = argparse.ArgumentParser(description="Generate auto b-roll slides for a short.")
+    source_broll.add_source_argument(ap)
     ap.add_argument("short_dir", type=Path, nargs="?", help="Path to a short-NN-<slug> folder")
     ap.add_argument("--heuristic", action="store_true", help="Force the no-API heuristic engine")
     ap.add_argument("--max", dest="cap", type=int, default=6, help="Max slides (default 6)")
@@ -1007,7 +1024,7 @@ def main() -> None:
     if args.short_dir is None:
         ap.error("short_dir is required (or use --audit-people)")
     generate(args.short_dir, heuristic=args.heuristic, cap=args.cap, dry_run=args.dry_run,
-             photo_seed=args.photo_seed, fresh_photo=args.fresh_photo)
+             photo_seed=args.photo_seed, fresh_photo=args.fresh_photo, sources=args.sources)
 
 
 if __name__ == "__main__":

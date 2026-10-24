@@ -10,6 +10,7 @@ import {
 } from "remotion";
 import {
   BRollSlide,
+  ImageSlide,
   ListSlide,
   LogoSlide,
   Palette,
@@ -486,6 +487,67 @@ const PersonCard: React.FC<{ slide: PersonSlide; dur: number }> = ({ slide, dur 
   );
 };
 
+/** Keep attribution readable without printing a long URL over the source. */
+function imageSourceLabel(slide: ImageSlide): string {
+  const label = slide.source_label?.trim();
+  const url = label && /^(https?:\/\/|www\.)/i.test(label)
+    ? label
+    : label ? undefined : slide.source_url;
+  if (!url) return label || "Source";
+  try {
+    const parsed = new URL(/^www\./i.test(url) ? `https://${url}` : url);
+    return parsed.hostname.replace(/^www\./i, "") || label || "Source";
+  } catch {
+    return label || "Source";
+  }
+}
+
+type ImageCardProps = { slide: ImageSlide; dur: number };
+
+function ImageCard({ slide, dur }: ImageCardProps) {
+  const frame = useCurrentFrame();
+  return (
+    <AbsoluteFill style={{
+      background: slide.background ?? DEFAULT_BG,
+      opacity: Math.min(fadeIn(frame), fadeOut(frame, dur)),
+      padding: "140px 72px 160px",
+      boxSizing: "border-box",
+      fontFamily: FONT,
+      color: "#fff",
+    }}>
+      {slide.title ? (
+        <div style={{
+          flexShrink: 0, marginBottom: 32, fontWeight: 900,
+          fontSize: 58, lineHeight: 1.12, whiteSpace: "pre-line", overflowWrap: "anywhere",
+        }}>
+          {slide.title}
+        </div>
+      ) : null}
+      <div style={{ flex: 1, minHeight: 0, overflow: "hidden", borderRadius: 20 }}>
+        <Img
+          src={staticFile(slide.src)}
+          premountFor={PREMOUNT_FRAMES}
+          style={{ width: "100%", height: "100%", objectFit: slide.fit ?? "contain" }}
+        />
+      </div>
+      <div style={{
+        flexShrink: 0, marginTop: 28, borderLeft: `5px solid ${slide.color}`,
+        paddingLeft: 22, fontSize: 32, lineHeight: 1.3, overflowWrap: "anywhere",
+      }}>
+        <div style={{ fontWeight: 800 }}>{imageSourceLabel(slide)}</div>
+        {slide.date ? (
+          <div style={{ color: "rgba(255,255,255,0.72)", marginTop: 6 }}>{slide.date}</div>
+        ) : null}
+        {slide.attribution || slide.license ? (
+          <div style={{ color: "rgba(255,255,255,0.72)", fontSize: 28, marginTop: 6 }}>
+            {[slide.attribution, slide.license].filter(Boolean).join(" | ")}
+          </div>
+        ) : null}
+      </div>
+    </AbsoluteFill>
+  );
+}
+
 /** Default accent per slide type, pulled from the short's palette so b-roll
  *  color-matches the Hyperframes overlays. An explicit slide.color always wins. */
 function paletteColorFor(type: BRollSlide["type"], palette: Palette): string {
@@ -500,6 +562,8 @@ function paletteColorFor(type: BRollSlide["type"], palette: Palette): string {
       return palette.primary;
     case "person":
       return palette.primary;
+    case "image":
+      return palette.secondary;
   }
 }
 
@@ -525,5 +589,7 @@ export const BRoll: React.FC<{
       return <LogoCard slide={withColor} dur={durationInFrames} anchor={badgeAnchor} />;
     case "person":
       return <PersonCard slide={withColor} dur={durationInFrames} />;
+    case "image":
+      return <ImageCard slide={withColor} dur={durationInFrames} />;
   }
 };
