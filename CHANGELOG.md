@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Source capture bounds response bytes and image pixels before image decoding.
+- With story check off, cut and clean accept overlapping words and blank word text.
+- Resuming at step 3 with story check keeps the saved `clips.json` plan, even when
+  no clips pass. Only passing clips continue in that run; finalize keeps exports
+  that still belong to the saved plan.
+
 **Hardening pass before merge.** Six parallel reviews across the whole tree, each
 bug reproduced before it was fixed and pinned by a test that fails without the
 fix. 258 tests to 353.

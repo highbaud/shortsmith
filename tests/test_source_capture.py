@@ -8,6 +8,7 @@ import socket
 import struct
 import subprocess
 import sys
+import time
 import zlib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,10 +24,10 @@ def _dns(address: str = "93.184.216.34") -> list[tuple]:
 
 
 def _response(data: bytes = b"public article", content_type: str = "text/html",
-              status: int = 200, location: str = "") -> MagicMock:
+              status: int = 200, location: str = "", **extra_headers: str) -> MagicMock:
     response = MagicMock(status=status)
     response.read1.side_effect = io.BytesIO(data).read1
-    headers = {"Content-Type": content_type, "Location": location}
+    headers = {"Content-Type": content_type, "Location": location, **extra_headers}
     response.getheader.side_effect = lambda name, default=None: headers.get(name, default)
     return response
 
@@ -38,6 +39,92 @@ def _png() -> bytes:
     return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 1, 8, 2, 0, 0, 0))
             + chunk(b"tEXt", b"ai_generated\x00fixture-metadata")
             + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00\x00\x00\xff")) + chunk(b"IEND", b""))
+
+
+@pytest.mark.parametrize("declared", [None, "1", "8"])
+def test_http_body_limit_counts_actual_bytes_and_stops_reading(
+    monkeypatch: pytest.MonkeyPatch, declared: str | None,
+) -> None:
+    monkeypatch.setattr(source_capture, "MAX_BODY_BYTES", 8)
+    headers = {"Content-Length": declared} if declared else {}
+    response = _response(b"123456789unread", **headers)
+    with pytest.raises(ValueError, match="byte limit"):
+        source_capture._read_response(response, time.monotonic() + 20, None)
+    assert response.read1.call_count == 1
+    assert response.read1.call_args.args == (9,)
+
+
+def test_http_body_limit_accepts_exact_limit_and_rejects_declared_size_early(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(source_capture, "MAX_BODY_BYTES", 8)
+    exact = _response(b"12345678", **{"Content-Length": "8"})
+    assert source_capture._read_response(exact, time.monotonic() + 20, None) == b"12345678"
+    too_large = _response(**{"Content-Length": "9"})
+    with pytest.raises(ValueError, match="byte limit"):
+        source_capture._read_response(too_large, time.monotonic() + 20, None)
+    too_large.read1.assert_not_called()
+
+
+def test_http_rejects_compressed_body_before_reading() -> None:
+    response = _response(**{"Content-Encoding": "gzip"})
+    with pytest.raises(ValueError, match="content encoding"):
+        source_capture._read_response(response, time.monotonic() + 20, None)
+    response.read1.assert_not_called()
+
+
+def _raster_headers(width: int, height: int) -> list[bytes]:
+    png = bytearray(_png())
+    struct.pack_into(">II", png, 16, width, height)
+    # Header-only fixtures: no pixel allocation or image decompression is needed.
+    bmp = b"BM" + bytes(12) + struct.pack("<Iii", 40, width, height)
+    tiff = b"II*\x00" + struct.pack("<IH", 8, 2)
+    tiff += struct.pack("<HHII", 256, 4, 1, width) + struct.pack("<HHII", 257, 4, 1, height)
+    jpeg = b"\xff\xd8\xff\xc0" + struct.pack(">HBHHB", 8, 8, height, width, 1)
+    webp_x = b"RIFF" + bytes(4) + b"WEBPVP8X" + struct.pack("<I", 10) + bytes(4)
+    webp_x += (width - 1).to_bytes(3, "little") + (height - 1).to_bytes(3, "little")
+    webp = b"RIFF" + bytes(4) + b"WEBPVP8 " + struct.pack("<I", 10)
+    webp += bytes(3) + b"\x9d\x01\x2a" + struct.pack("<HH", width, height)
+    webp_l = b"RIFF" + bytes(4) + b"WEBPVP8L" + struct.pack("<I", 5) + b"\x2f"
+    webp_l += struct.pack("<I", (width - 1) | ((height - 1) << 14))
+    return [bytes(png), b"GIF89a" + struct.pack("<HH", width, height), bmp, tiff,
+            jpeg, webp_x, webp, webp_l]
+
+
+@pytest.mark.parametrize("data", _raster_headers(4096, 4096))
+def test_image_pixel_limit_rejects_all_supported_rasters_before_decode(data: bytes) -> None:
+    with patch("cv2.imdecode") as decode:
+        with pytest.raises(ValueError, match="pixel limit"):
+            source_capture._decode_raster(data)
+    decode.assert_not_called()
+
+
+@pytest.mark.parametrize("data", _raster_headers(2, 1))
+def test_image_dimensions_support_existing_raster_formats(data: bytes) -> None:
+    assert source_capture._raster_dimensions(data) == (2, 1)
+
+
+@pytest.mark.parametrize("data", [b"BM", b"GIF89a", b"II*\x00", b"\xff\xd8\xff", b"RIFFxxxxWEBP"])
+def test_invalid_raster_dimensions_fail_before_decode(data: bytes) -> None:
+    with patch("cv2.imdecode") as decode:
+        with pytest.raises(ValueError):
+            source_capture._decode_raster(data)
+    decode.assert_not_called()
+
+
+def test_duplicate_tiff_dimensions_fail_before_decode() -> None:
+    data = bytearray(_raster_headers(4096, 4096)[3])
+    struct.pack_into("<H", data, 8, 4)
+    data += struct.pack("<HHII", 256, 4, 1, 1) + struct.pack("<HHII", 257, 4, 1, 1)
+    with patch("cv2.imdecode") as decode:
+        with pytest.raises(ValueError, match="duplicate raster dimensions"):
+            source_capture._decode_raster(bytes(data))
+    decode.assert_not_called()
+
+
+def test_image_pixel_limit_accepts_exact_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(source_capture, "MAX_IMAGE_PIXELS", 2)
+    assert source_capture._decode_raster(_png()).shape[:2] == (1, 2)
 
 
 @pytest.mark.parametrize("url", [
@@ -192,6 +279,125 @@ def test_browser_policy_rejects_private_reserved_and_internal_urls() -> None:
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="Node runtime is not installed")
+def test_browser_checks_raster_headers_and_limits_before_decode() -> None:
+    fixtures = {"small": [data.hex() for data in _raster_headers(2, 1)],
+                "large": [data.hex() for data in _raster_headers(4096, 4096)]}
+    result = _node("""
+      import assert from 'node:assert/strict';
+      import {assertImagePixels, rasterDimensions, MAX_IMAGE_PIXELS, MAX_BODY_BYTES}
+        from './scripts/capture_source.mjs';
+      const fixtures = FIXTURES;
+      assert.equal(MAX_IMAGE_PIXELS, 2160 * 3840);
+      assert.equal(MAX_BODY_BYTES, MAX_IMAGE_PIXELS * 8);
+      for (const hex of fixtures.small) {
+        const data = Buffer.from(hex, 'hex');
+        assert.deepEqual(rasterDimensions(data), [2, 1]); assertImagePixels(data);
+      }
+      for (const hex of fixtures.large) {
+        assert.throws(() => assertImagePixels(Buffer.from(hex, 'hex')), /pixel limit/);
+      }
+      const exact = Buffer.from(fixtures.small[0], 'hex');
+      exact.writeUInt32BE(2160, 16); exact.writeUInt32BE(3840, 20);
+      assertImagePixels(exact);
+      for (const data of ['BM', 'GIF89a', 'RIFFxxxxWEBP', '<svg></svg>']) {
+        assert.throws(() => assertImagePixels(Buffer.from(data)), /raster dimensions/);
+      }
+      const tiff = Buffer.concat([Buffer.from(fixtures.large[3], 'hex'),
+        Buffer.from('000104000100000001000000010104000100000001000000', 'hex')]);
+      tiff.writeUInt16LE(4, 8);
+      assert.throws(() => assertImagePixels(tiff), /duplicate raster dimensions/);
+    """.replace("FIXTURES", json.dumps(fixtures)))
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Node runtime is not installed")
+def test_browser_http_caps_real_stream_bytes_and_image_resources() -> None:
+    result = _node("""
+      import assert from 'node:assert/strict';
+      import https from 'node:https';
+      import {EventEmitter} from 'node:events';
+      import {publicRequest, MAX_BODY_BYTES} from './scripts/capture_source.mjs';
+      let fixture; let response; let request; let sent;
+      https.get = (_url, _options, callback) => {
+        request = new EventEmitter(); request.destroy = () => { request.destroyed = true; };
+        setImmediate(() => {
+          response = new EventEmitter(); response.headers = fixture.headers;
+          response.statusCode = fixture.status || 200;
+          response.destroy = () => { response.destroyed = true; };
+          callback(response); sent = 0;
+          for (const chunk of fixture.chunks) {
+            if (response.destroyed) break;
+            sent += chunk.length; response.emit('data', chunk);
+          }
+          if (!response.destroyed) response.emit('end');
+        });
+        return request;
+      };
+      const fetch = (image = false) => publicRequest(new URL('https://example.org/'),
+        {address: '93.184.216.34', family: 4}, {}, new AbortController().signal, image);
+      fixture = {headers: {'content-length': String(MAX_BODY_BYTES + 1)}, chunks: [Buffer.from('unused')]};
+      await assert.rejects(fetch(), /byte limit/);
+      assert.equal(sent, 0); assert.ok(request.destroyed && response.destroyed);
+      const chunk = Buffer.alloc(2 ** 14);
+      for (const headers of [{}, {'content-length': '1'}]) {
+        fixture = {headers, chunks: [...Array(MAX_BODY_BYTES / chunk.length).fill(chunk), Buffer.from('x'), chunk]};
+        await assert.rejects(fetch(), /byte limit/);
+        assert.equal(sent, MAX_BODY_BYTES + 1); assert.ok(request.destroyed && response.destroyed);
+      }
+      fixture = {headers: {'content-length': String(MAX_BODY_BYTES)},
+        chunks: Array(MAX_BODY_BYTES / chunk.length).fill(chunk)};
+      assert.equal((await fetch()).body.length, MAX_BODY_BYTES);
+      fixture = {headers: {'content-encoding': 'gzip'}, chunks: [Buffer.from('unused')]};
+      await assert.rejects(fetch(), /content encoding/); assert.equal(sent, 0);
+      const png = Buffer.from(PNG, 'hex');
+      for (const [headers, image] of [[{'content-type': 'image/png'}, false],
+        [{'content-type': 'text/plain'}, false], [{'content-type': 'text/plain'}, true]]) {
+        fixture = {headers, chunks: [png]};
+        await assert.rejects(fetch(image), /pixel limit/);
+      }
+      fixture = {headers: {'content-type': 'image/avif'}, chunks: [Buffer.from('unsupported')]};
+      await assert.rejects(fetch(true), /raster dimensions/);
+    """.replace("PNG", json.dumps(_raster_headers(4096, 4096)[0].hex())))
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Node runtime is not installed")
+def test_browser_blocks_optional_unsupported_images_but_fails_required_documents() -> None:
+    result = _node("""
+      import assert from 'node:assert/strict';
+      import {syncBuiltinESMExports} from 'node:module';
+      import dns from 'node:dns/promises';
+      import https from 'node:https';
+      import {EventEmitter} from 'node:events';
+      dns.lookup = async () => [{address: '93.184.216.34', family: 4}];
+      https.get = (_url, _options, callback) => {
+        const request = new EventEmitter(); request.destroy = () => {};
+        setImmediate(() => {
+          const response = new EventEmitter(); response.statusCode = 200;
+          response.headers = {'content-type': 'image/svg+xml'}; response.destroy = () => {};
+          callback(response); response.emit('data', Buffer.from('<svg></svg>')); response.emit('end');
+        });
+        return request;
+      };
+      syncBuiltinESMExports();
+      const {interceptRequests} = await import('./scripts/capture_source.mjs');
+      const client = new EventEmitter(); let completed;
+      client.send = async (method) => { if (method === 'Fetch.failRequest') completed(); };
+      const check = await interceptRequests(client, 20000);
+      for (const resourceType of ['Image', 'Document']) {
+        await new Promise((resolve) => {
+          completed = resolve;
+          client.emit('Fetch.requestPaused', {requestId: 'fixture', resourceType,
+            request: {url: 'https://example.org/image.svg', method: 'GET', headers: {}}});
+        });
+        if (resourceType === 'Image') check();
+        else assert.throws(check, /raster dimensions/);
+      }
+    """)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="Node runtime is not installed")
 @pytest.mark.parametrize(("html", "url", "expected_error"), [
     ('<title>Original release</title><article><h1>Original release</h1>'
      '<div style="height:2200px"></div><p style="color:red">Exact source quote.</p>'
@@ -208,6 +414,10 @@ def test_browser_policy_rejects_private_reserved_and_internal_urls() -> None:
     ('<p>This Post was deleted</p>', 'https://x.com/original/status/42', 'deleted'),
     ('<article><a href="/original/status/42">Original post</a><p>Exact source quote.</p></article>',
      'https://x.com/original/status/42', ''),
+    ('<article><p>Exact source quote.</p><div style="height:9000px"></div></article>',
+     'https://example.org/release', 'pixel limit'),
+    ('<article><p>Exact source quote.</p><img src="/optional.svg"></article>',
+     'https://example.org/release', ''),
 ])
 def test_real_browser_screenshots_original_dom_with_offline_http_fixture(
     tmp_path: Path, html: str, url: str, expected_error: str,

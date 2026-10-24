@@ -10,7 +10,8 @@ from types import SimpleNamespace
 import pytest
 from click.testing import CliRunner
 
-from shortsmith import config, cut_clips, find_clips, story_review
+from scripts import finalize
+from shortsmith import config, cut_clips, find_clips, pipeline, story_review
 from shortsmith.config import Config
 from shortsmith.pipeline import cli
 
@@ -281,6 +282,32 @@ def run_files(monkeypatch, tmp_path, words, picks):
     return video, work
 
 
+def assert_saved_exports_still_selected(monkeypatch, tmp_path, work, picks):
+    source = tmp_path / "kit" / "auto-shorts" / "source"
+    exports = tmp_path / "kit" / "renders" / "_all"
+    exports.mkdir(parents=True)
+    expected = []
+    for pick in picks:
+        project = source / f'short-{pick["rank"]:02d}-{pick["slug"]}'
+        project.mkdir(parents=True)
+        expected.append(project)
+        (exports / f"source__{project.name}.mp4").write_bytes(b"existing export")
+    stale = source / "short-04-old-pick"
+    stale.mkdir()
+    stale_export = exports / f"source__{stale.name}.mp4"
+    stale_export.write_bytes(b"stale export")
+    monkeypatch.setattr(finalize, "WORK_ROOT", work.parent)
+    monkeypatch.setattr(finalize, "ALL_DIR", exports)
+
+    assert finalize._current_projects(source) == expected
+
+    assert {path.name for path in exports.iterdir()} == {
+        f"source__{project.name}.mp4" for project in expected
+    }
+    assert all(path.read_bytes() == b"existing export" for path in exports.iterdir())
+    assert (exports.parent / "_held" / stale_export.name).read_bytes() == b"stale export"
+
+
 def test_explicit_resume_check_holds_clips_before_any_cut(monkeypatch, tmp_path, words, picks):
     requests = fake_claude(monkeypatch, picks, lambda payload: [
         {"clip_id": c["clip_id"], "decision": "needs_review", "reason": "Unclear story.", "issues": []}
@@ -288,6 +315,7 @@ def test_explicit_resume_check_holds_clips_before_any_cut(monkeypatch, tmp_path,
     ])
     monkeypatch.setenv("SHORTSMITH_STORY_CHECK", "off")
     video, work = run_files(monkeypatch, tmp_path, words, picks)
+    original = (work / "clips.json").read_bytes()
     media_calls = []
     monkeypatch.setattr(subprocess, "run", lambda *a, **kw: media_calls.append(a))
 
@@ -298,8 +326,46 @@ def test_explicit_resume_check_holds_clips_before_any_cut(monkeypatch, tmp_path,
     assert len(requests) == 1
     assert requests[0]["system"] == story_review.SYSTEM_PROMPT
     assert media_calls == []
-    assert json.loads((work / "clips.json").read_text()) == []
+    assert (work / "clips.json").read_bytes() == original
     assert json.loads((work / "story_review.json").read_text())["summary"]["needs_review"] == 3
+    assert_saved_exports_still_selected(monkeypatch, tmp_path, work, picks)
+
+
+def test_partial_resume_checks_only_passes_without_replacing_saved_picks(
+    monkeypatch, tmp_path, words, picks,
+):
+    fake_claude(monkeypatch, picks, mixed_reviews)
+    video, work = run_files(monkeypatch, tmp_path, words, picks)
+    original = (work / "clips.json").read_bytes()
+    monkeypatch.setattr(config, "AUTO_SHORTS_ROOT", tmp_path / "kit" / "auto-shorts")
+    received = {}
+
+    def cut(clips, *args):
+        received["cut"] = clips
+        return []
+
+    def scaffold(manifests, clips, *args):
+        received["scaffold"] = clips
+        return []
+
+    monkeypatch.setattr(pipeline.cut_clips, "cut_all", cut)
+    monkeypatch.setattr(pipeline.clean_clips, "clean_all", lambda manifests, *args: manifests)
+    monkeypatch.setattr(pipeline.align, "align_all", lambda manifests, *args: manifests)
+    monkeypatch.setattr(pipeline.reframe, "reframe_all", lambda manifests, *args: manifests)
+    monkeypatch.setattr(pipeline.scaffold, "scaffold_all", scaffold)
+
+    result = CliRunner().invoke(cli, ["run", str(video), "--from-step", "3",
+                                    "--story-check", "--no-enhance", "--clip-engine", "anthropic"])
+
+    assert result.exit_code == 0, result.output
+    assert (work / "clips.json").read_bytes() == original
+    for stage in ("cut", "scaffold"):
+        assert [clip["slug"] for clip in received[stage]] == ["complete-plan"]
+        assert received[stage][0]["story_review"]["decision"] == "pass"
+    assert json.loads((work / "story_review.json").read_text())["summary"] == {
+        "pass": 1, "reject": 1, "needs_review": 1,
+    }
+    assert_saved_exports_still_selected(monkeypatch, tmp_path, work, picks)
 
 
 def test_run_opt_out_reaches_cutter_without_review_call(monkeypatch, tmp_path, words, picks):

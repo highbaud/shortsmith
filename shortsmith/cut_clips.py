@@ -126,7 +126,10 @@ def plan_segments(clip: dict, words: list[dict], cfg: Config) -> list[list[float
         log.warning("Clip %s: all segments failed boundary snap; falling back to raw start/end",
                     clip.get("rank", "unranked"))
         snapped = [[clip["start"], clip["end"]]]
-    story_review.require_safe_boundaries(words, snapped)
+    if cfg.story_check:
+        story_review.require_safe_boundaries(words, snapped)
+    else:
+        story_review.require_valid_timing(words, snapped)
     return snapped
 
 
@@ -140,7 +143,8 @@ def _snap_boundary(
     """Snap a requested cut point to a word-gap boundary.
 
     The returned time is a gap or shared edge between words, or a recording
-    edge. The planner also checks all words for overlapping timestamp spans.
+    edge. With story checking on, the planner also refuses cuts that cross
+    overlapping word spans.
 
     `prefer_after` matters for end-of-clip snaps: we want to EXTEND forward
     to find a clean sentence end rather than chop a thought short. So when

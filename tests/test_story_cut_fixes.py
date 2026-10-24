@@ -172,6 +172,71 @@ def test_partial_filler_edits_keep_the_whole_word_in_review_and_audio(monkeypatc
     assert [word["text"] for word in cleaned["words_after_clean"]] == ["We", "um", "agree."]
 
 
+@pytest.mark.parametrize("quirk", ["overlap", "empty_text"])
+def test_story_opt_out_cuts_and_cleans_transcript_quirks(monkeypatch, tmp_path, quirk):
+    source = [
+        {"text": "We", "start": 0, "end": .6},
+        {"text": "cannot", "start": .5, "end": 1.2},
+        {"text": "allow", "start": 1.1, "end": 1.6},
+        {"text": "this.", "start": 1.5, "end": 2.2},
+        {"text": "Ever.", "start": 2.1, "end": 3},
+    ]
+    if quirk == "empty_text":
+        source = words("We can allow this.")
+        source[1]["text"] = " "
+    clip = {"rank": 1, "slug": "quirk", "start": .8, "end": 1.8,
+            "segments": [[.8, 1.8]]}
+    calls = media_stub(monkeypatch)
+    cfg = Config(story_check=False)
+
+    manifest = cut_clips.cut_one(clip, source, tmp_path / "source.mp4", tmp_path, cfg)
+    cleaned = clean_clips.clean_all([manifest], source, tmp_path, cfg)[0]
+
+    assert calls
+    assert Path(cleaned["cleaned_path"]).is_file()
+    assert "story_review" not in cleaned
+    assert cleaned["words_after_clean"]
+
+
+@pytest.mark.parametrize("stage", ["cut", "clean"])
+def test_story_check_still_rejects_empty_word_text(monkeypatch, tmp_path, stage):
+    source = words("We can allow this.")
+    source[1]["text"] = " "
+    clip = {"rank": 1, "slug": "empty", "start": 0, "end": 2.2,
+            "segments": [[0, 2.2]]}
+    calls = media_stub(monkeypatch)
+
+    with pytest.raises(ValueError, match="spoken text"):
+        if stage == "cut":
+            cut_clips.cut_one(clip, source, tmp_path / "source.mp4", tmp_path, Config())
+        else:
+            manifest = {"rank": 1, "raw_path": str(tmp_path / "raw.mp4"),
+                        "snapped_segments": [[0, 2.2]]}
+            clean_clips.clean_all([manifest], source, tmp_path, Config())
+
+    assert calls == []
+
+
+@pytest.mark.parametrize("story_check", [False, True])
+@pytest.mark.parametrize("invalid", ["negative", "nonfinite", "inverted", "unordered", "segment"])
+def test_clean_plan_keeps_time_validation_with_story_opt_out(story_check, invalid):
+    source = words("We agree.")
+    segments = [[0, 1]]
+    if invalid == "negative":
+        source[0]["start"] = -1
+    elif invalid == "nonfinite":
+        source[0]["end"] = float("nan")
+    elif invalid == "inverted":
+        source[0]["start"], source[0]["end"] = .3, .1
+    elif invalid == "unordered":
+        source[0]["start"], source[0]["end"] = .7, .9
+    else:
+        segments = [[1, 0]]
+
+    with pytest.raises(ValueError):
+        clean_clips.plan_cleaning(source, segments, Config(story_check=story_check))
+
+
 def test_story_review_reads_final_retained_speech_once(monkeypatch, tmp_path):
     source, clip = question()
     requests = approve(monkeypatch)

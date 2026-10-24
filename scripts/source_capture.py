@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -20,6 +21,10 @@ from pathlib import Path
 
 HTTP_TIMEOUT = 20
 BROWSER_TIMEOUT = 30
+# At most a 2x-density 1080x1920 source, including 3840x2160 landscape images.
+MAX_IMAGE_PIXELS = (1080 * 2) * (1920 * 2)
+# One uncompressed 16-bit RGBA source frame is the HTTP body budget.
+MAX_BODY_BYTES = MAX_IMAGE_PIXELS * 4 * 2
 _ROOT = Path(__file__).resolve().parent.parent
 _UA = "ShortSmith public-source capture"
 _REDIRECTS = {301, 302, 303, 307, 308}
@@ -71,14 +76,24 @@ def _public_addresses(host: str, port: int) -> list[str]:
 
 def _read_response(response: http.client.HTTPResponse, deadline: float,
                    connection_socket: socket.socket | None) -> bytes:
+    encoding = response.getheader("Content-Encoding", "identity").strip().lower()
+    if encoding != "identity":
+        raise ValueError("Public source uses an unexpected content encoding")
+    declared = response.getheader("Content-Length")
+    if declared and int(declared) > MAX_BODY_BYTES:
+        raise ValueError("Public source body exceeds the byte limit")
     chunks: list[bytes] = []
+    size = 0
     # TLS plaintext records contain at most 2**14 bytes (RFC 8446, section 5.1).
     while time.monotonic() < deadline:
         if connection_socket is not None:
             connection_socket.settimeout(deadline - time.monotonic())
-        chunk = response.read1(2**14)
+        chunk = response.read1(min(2**14, MAX_BODY_BYTES - size + 1))
         if not chunk:
             return b"".join(chunks)
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            raise ValueError("Public source body exceeds the byte limit")
         chunks.append(chunk)
     raise TimeoutError("Public source download exceeded the HTTP deadline")
 
@@ -137,6 +152,73 @@ def fetch_public(url: str) -> tuple[bytes, str, str]:
     raise ValueError("Public source exceeded the standard HTTP redirect limit")
 
 
+def _raster_dimensions(data: bytes) -> tuple[int, int]:
+    """Read raster dimensions without allocating decoded pixels."""
+    try:
+        if data.startswith(b"\x89PNG\r\n\x1a\n") and data[12:16] == b"IHDR":
+            return struct.unpack_from(">II", data, 16)
+        if data.startswith((b"GIF87a", b"GIF89a")):
+            return struct.unpack_from("<HH", data, 6)
+        if data.startswith(b"BM"):
+            dib_size = struct.unpack_from("<I", data, 14)[0]
+            if dib_size == 12:
+                return struct.unpack_from("<HH", data, 18)
+            if dib_size >= 40:
+                width, height = struct.unpack_from("<ii", data, 18)
+                return width, abs(height)
+        if data.startswith(b"\xff\xd8\xff"):
+            offset = 2
+            while offset < len(data):
+                if data[offset] != 0xFF:
+                    break
+                while offset < len(data) and data[offset] == 0xFF:
+                    offset += 1
+                marker = data[offset]
+                offset += 1
+                if marker in {0xD8, 0x01} or 0xD0 <= marker <= 0xD7:
+                    continue
+                if marker in {0xD9, 0xDA}:
+                    break
+                length = struct.unpack_from(">H", data, offset)[0]
+                if length < 2 or offset + length > len(data):
+                    break
+                if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                              0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+                    height, width = struct.unpack_from(">HH", data, offset + 3)
+                    return width, height
+                offset += length
+        if data.startswith((b"II*\x00", b"MM\x00*")):
+            endian = "<" if data[:2] == b"II" else ">"
+            offset = struct.unpack_from(endian + "I", data, 4)[0]
+            count = struct.unpack_from(endian + "H", data, offset)[0]
+            dimensions = {}
+            for index in range(count):
+                entry = offset + 2 + index * 12
+                tag, kind, size = struct.unpack_from(endian + "HHI", data, entry)
+                if tag in {256, 257} and size == 1 and kind in {3, 4}:
+                    if tag in dimensions:
+                        raise ValueError("Source image has duplicate raster dimensions")
+                    dimensions[tag] = struct.unpack_from(
+                        endian + ("H" if kind == 3 else "I"), data, entry + 8,
+                    )[0]
+            if len(dimensions) == 2:
+                return dimensions[256], dimensions[257]
+        if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+            kind = data[12:16]
+            if kind == b"VP8X" and len(data) >= 30:
+                return (1 + int.from_bytes(data[24:27], "little"),
+                        1 + int.from_bytes(data[27:30], "little"))
+            if kind == b"VP8 " and data[23:26] == b"\x9d\x01\x2a":
+                width, height = struct.unpack_from("<HH", data, 26)
+                return width & 0x3FFF, height & 0x3FFF
+            if kind == b"VP8L" and data[20:21] == b"\x2f":
+                bits = struct.unpack_from("<I", data, 21)[0]
+                return 1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF)
+    except (IndexError, struct.error):
+        pass
+    raise ValueError("Source image has invalid or unsupported raster dimensions")
+
+
 def _decode_raster(data: bytes) -> object:
     import cv2
     import numpy as np
@@ -149,6 +231,9 @@ def _decode_raster(data: bytes) -> object:
     if data.startswith(signatures[0]) and (len(data) < 57 or b"IEND" not in data):
         # 57 bytes is PNG's signature plus required IHDR, IDAT, and IEND overhead.
         raise ValueError("Source PNG is truncated")
+    width, height = _raster_dimensions(data)
+    if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+        raise ValueError("Source image exceeds the pixel limit")
     try:
         image = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
     except cv2.error as error:

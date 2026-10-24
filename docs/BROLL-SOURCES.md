@@ -75,6 +75,15 @@ Screenshots show the original page or post. A deleted post, a login page, or a
 browser challenge is skipped. Nothing signs in to your accounts. Page capture
 uses the browser already installed for Remotion; it does not download a browser.
 
+Each HTTP response is limited to 66,355,200 bytes. Raster images and screenshot
+crops are limited to 8,294,400 pixels before decoding or capture. The pixel limit
+allows twice the 1080x1920 capture size in each axis, including a 3840x2160 image.
+The byte limit is one such frame with four 16-bit color channels. Responses that
+use compression despite the requested identity encoding are rejected.
+PNG, JPEG, GIF, BMP, TIFF, and WebP headers are checked before image decoding.
+Page images with unsupported or invalid headers, or excess size, are blocked;
+other page content can still be captured. A blocked main document stops capture.
+
 ## Supply a source yourself
 
 Add an item to `broll.sources.json` when you know the correct source. This avoids

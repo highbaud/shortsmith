@@ -133,7 +133,10 @@ def plan_cleaning(
     nominal lengths after cutting; a changed retained-word digest stops a stale
     approval before cleaning proceeds.
     """
-    story_review.require_safe_boundaries(source_words, segments)
+    if cfg.story_check:
+        story_review.require_safe_boundaries(source_words, segments)
+    else:
+        story_review.require_valid_timing(source_words, segments)
     local_words = slice_words_for_segments(
         source_words, segments,
         xfade_seconds=cfg.seam_xfade_seconds if xfade_seconds is None else xfade_seconds,

@@ -279,6 +279,23 @@ def retained_speech_digest(words: list[dict], segments: list[list[float]]) -> st
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def require_valid_timing(words: list[dict], segments: list[list[float]]) -> None:
+    """Validate cut times without requiring usable story evidence."""
+    if not isinstance(words, list):
+        raise ValueError("source transcript must be a list of timed words")
+    previous_start = None
+    for index, word in enumerate(words):
+        if not isinstance(word, dict):
+            raise ValueError(f"source word {index} must be an object")
+        start = _time(word.get("start"), f"source word {index} start")
+        end = _time(word.get("end"), f"source word {index} end")
+        if end < start or (previous_start is not None and start < previous_start):
+            raise ValueError(f"source word {index} has inverted or unordered timestamps")
+        previous_start = start
+    for index, raw in enumerate(segments):
+        _range(raw, f"segment {index}")
+
+
 def require_safe_boundaries(words: list[dict], segments: list[list[float]]) -> None:
     """Refuse partial audible words before deriving fully omitted evidence."""
     source, _ = _source(words)

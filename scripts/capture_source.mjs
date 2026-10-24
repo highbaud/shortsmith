@@ -9,6 +9,11 @@ import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
+// A 2x-density 1080x1920 source, also enough area for a 3840x2160 image.
+export const MAX_IMAGE_PIXELS = (1080 * 2) * (1920 * 2);
+// One uncompressed 16-bit RGBA frame is the per-response HTTP body budget.
+export const MAX_BODY_BYTES = MAX_IMAGE_PIXELS * 4 * 2;
+
 const deny = new BlockList();
 for (const [address, prefix] of [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8],
@@ -55,7 +60,78 @@ async function publicAddress(host) {
   return addresses[0];
 }
 
-function publicRequest(url, address, headers, signal) {
+export function rasterDimensions(data) {
+  try {
+    if (data.subarray(0, 8).equals(Buffer.from('\x89PNG\r\n\x1a\n', 'binary'))
+        && data.toString('ascii', 12, 16) === 'IHDR') {
+      return [data.readUInt32BE(16), data.readUInt32BE(20)];
+    }
+    if (['GIF87a', 'GIF89a'].includes(data.toString('ascii', 0, 6))) {
+      return [data.readUInt16LE(6), data.readUInt16LE(8)];
+    }
+    if (data.toString('ascii', 0, 2) === 'BM') {
+      const dibSize = data.readUInt32LE(14);
+      if (dibSize === 12) return [data.readUInt16LE(18), data.readUInt16LE(20)];
+      if (dibSize >= 40) return [data.readInt32LE(18), Math.abs(data.readInt32LE(22))];
+    }
+    if (data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+      let offset = 2;
+      while (offset < data.length) {
+        if (data[offset] !== 0xff) break;
+        while (offset < data.length && data[offset] === 0xff) offset++;
+        const marker = data[offset++];
+        if ([0xd8, 0x01].includes(marker) || (marker >= 0xd0 && marker <= 0xd7)) continue;
+        if ([0xd9, 0xda].includes(marker)) break;
+        const length = data.readUInt16BE(offset);
+        if (length < 2 || offset + length > data.length) break;
+        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+          return [data.readUInt16BE(offset + 5), data.readUInt16BE(offset + 3)];
+        }
+        offset += length;
+      }
+    }
+    const tiff = data.toString('binary', 0, 4);
+    if (['II*\x00', 'MM\x00*'].includes(tiff)) {
+      const short = (offset) => tiff.startsWith('II') ? data.readUInt16LE(offset) : data.readUInt16BE(offset);
+      const long = (offset) => tiff.startsWith('II') ? data.readUInt32LE(offset) : data.readUInt32BE(offset);
+      const offset = long(4);
+      const count = short(offset);
+      const dimensions = new Map();
+      for (let index = 0; index < count; index++) {
+        const entry = offset + 2 + index * 12;
+        const tag = short(entry); const kind = short(entry + 2); const size = long(entry + 4);
+        if ([256, 257].includes(tag) && size === 1 && [3, 4].includes(kind)) {
+          if (dimensions.has(tag)) throw new Error('Source image has duplicate raster dimensions');
+          dimensions.set(tag, kind === 3 ? short(entry + 8) : long(entry + 8));
+        }
+      }
+      if (dimensions.size === 2) return [dimensions.get(256), dimensions.get(257)];
+    }
+    if (data.toString('ascii', 0, 4) === 'RIFF' && data.toString('ascii', 8, 12) === 'WEBP') {
+      const kind = data.toString('ascii', 12, 16);
+      if (kind === 'VP8X') return [1 + data.readUIntLE(24, 3), 1 + data.readUIntLE(27, 3)];
+      if (kind === 'VP8 ' && data.subarray(23, 26).equals(Buffer.from([0x9d, 0x01, 0x2a]))) {
+        return [data.readUInt16LE(26) & 0x3fff, data.readUInt16LE(28) & 0x3fff];
+      }
+      if (kind === 'VP8L' && data[20] === 0x2f) {
+        const bits = data.readUInt32LE(21);
+        return [1 + (bits & 0x3fff), 1 + ((bits >>> 14) & 0x3fff)];
+      }
+    }
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+  }
+  throw new Error('Source image has invalid or unsupported raster dimensions');
+}
+
+export function assertImagePixels(data) {
+  const [width, height] = rasterDimensions(data);
+  if (width <= 0 || height <= 0 || width * height > MAX_IMAGE_PIXELS) {
+    throw new Error('Source image exceeds the pixel limit');
+  }
+}
+
+export function publicRequest(url, address, headers, signal, image = false) {
   return new Promise((resolve, reject) => {
     const transport = url.protocol === 'https:' ? https : http;
     const request = transport.get(url, {
@@ -64,18 +140,40 @@ function publicRequest(url, address, headers, signal) {
       lookup: (_hostname, options, done) => options.all
         ? done(null, [address]) : done(null, address.address, address.family),
     }, (response) => {
+      const fail = (error) => { response.destroy(); request.destroy(); reject(error); };
+      if ((response.headers['content-encoding'] || 'identity').trim().toLowerCase() !== 'identity') {
+        fail(new Error('Public source uses an unexpected content encoding'));
+        return;
+      }
+      if (Number(response.headers['content-length']) > MAX_BODY_BYTES) {
+        fail(new Error('Public source body exceeds the byte limit'));
+        return;
+      }
       const chunks = [];
-      response.on('data', (chunk) => chunks.push(chunk));
+      let size = 0;
+      response.on('data', (chunk) => {
+        size += chunk.length;
+        if (size > MAX_BODY_BYTES) fail(new Error('Public source body exceeds the byte limit'));
+        else chunks.push(chunk);
+      });
       response.on('error', reject);
-      response.on('end', () => resolve({
-        status: response.statusCode, headers: response.headers, body: Buffer.concat(chunks),
-      }));
+      response.on('end', () => {
+        try {
+          const body = Buffer.concat(chunks);
+          const mime = (response.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+          // Inspect mislabeled rasters too: Chromium sniffs formats independently.
+          const raster = /^(\x89PNG|\xff\xd8\xff|GIF8[79]a|BM|II\*\x00|MM\x00\*|RIFF)/.test(body.toString('binary', 0, 12));
+          const redirected = [301, 302, 303, 307, 308].includes(response.statusCode);
+          if (!redirected && (image || mime.startsWith('image/') || raster)) assertImagePixels(body);
+          resolve({status: response.statusCode, headers: response.headers, body});
+        } catch (error) { reject(error); }
+      });
     });
     request.on('error', reject);
   });
 }
 
-export async function fetchPublic(value, headers = {}, timeout = 20000) {
+export async function fetchPublic(value, headers = {}, timeout = 20000, image = false) {
   const {url, host} = validateUrl(value);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -89,13 +187,13 @@ export async function fetchPublic(value, headers = {}, timeout = 20000) {
       new Promise((_, reject) => controller.signal.addEventListener('abort',
         () => reject(new Error('Public source HTTP deadline exceeded')), {once: true})),
     ]);
-    return await publicRequest(url, address, safeHeaders, controller.signal);
+    return await publicRequest(url, address, safeHeaders, controller.signal, image);
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function interceptRequests(client, httpTimeout) {
+export async function interceptRequests(client, httpTimeout) {
   let failure = null;
   client.on('Fetch.requestPaused', (event) => {
     void (async () => {
@@ -104,7 +202,8 @@ async function interceptRequests(client, httpTimeout) {
           await client.send('Fetch.failRequest', {requestId: event.requestId, errorReason: 'BlockedByClient'});
           return;
         }
-        const response = await fetchPublic(event.request.url, event.request.headers, httpTimeout);
+        const response = await fetchPublic(event.request.url, event.request.headers, httpTimeout,
+          event.resourceType === 'Image');
         const responseHeaders = Object.entries(response.headers)
           .filter(([name]) => !['transfer-encoding', 'connection', 'set-cookie'].includes(name))
           .flatMap(([name, values]) => (Array.isArray(values) ? values : [values])
@@ -245,6 +344,9 @@ async function screenshotPage(browser, options) {
   // supplies animation frames; there is no fixed sleep or guessed loading delay.
   if (statusId) await waitForPost(page, statusId, options.browserTimeout);
   const clip = await page.evaluate(inspectDom, options.selector, options.quote, statusId);
+  if (!Number.isFinite(clip.width * clip.height) || clip.width * clip.height > MAX_IMAGE_PIXELS) {
+    throw new Error('Source screenshot exceeds the pixel limit');
+  }
   assertPageIdentity(options.url, page.url());
   checkRequests();
   const {value} = await client.send('Page.captureScreenshot', {

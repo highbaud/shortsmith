@@ -195,7 +195,8 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
                 clips = find_clips.check_stories(
                     clips, words, work_dir / "story_review.json", cfg,
                 )
-                clips_path.write_text(json.dumps(clips, indent=2), encoding="utf-8")
+                # Filter this run only. The saved picks also select existing
+                # exports in finalize; a recheck must not replace that plan.
             except (RuntimeError, ValueError) as exc:
                 raise click.ClickException(str(exc)) from exc
 
