@@ -17,6 +17,7 @@ from . import story_review
 from ._media import probe_duration
 from .clean_clips import plan_cleaning
 from .config import Config
+from .word_pauses import PAUSE_MIN_S
 
 log = logging.getLogger(__name__)
 
@@ -158,8 +159,13 @@ def _snap_boundary(
     Tiered preference:
       Tier 0 — sentence-end punctuation + ≥min_silence gap
       Tier 1 — ≥breath_silence gap (any)
-      Tier 2 — any word gap, within ±(snap_window × 2.5)
-      Tier 3 — any word gap, within ±(snap_window × 5.0) — last resort
+      Tier 2 — a pause (gap ≥ word_pauses.PAUSE_MIN_S), within ±(snap_window × 2.5)
+      Tier 3 — any word gap, within ±(snap_window × 2.5)
+      Tier 4 — a pause, within ±(snap_window × 5.0)
+      Tier 5 — any word gap, within ±(snap_window × 5.0) — last resort
+
+    A shorter or zero gap is a shared word edge in running speech, so a
+    measured pause wins over it within the same window.
     """
     if not words:
         return t
@@ -217,9 +223,9 @@ def _snap_boundary(
         elif gap >= cfg.boundary_breath_silence and dist <= w0:
             tier = 1
         elif dist <= w1:
-            tier = 2
+            tier = 2 if gap >= PAUSE_MIN_S else 3
         elif dist <= w2:
-            tier = 3
+            tier = 4 if gap >= PAUSE_MIN_S else 5
         else:
             continue
 

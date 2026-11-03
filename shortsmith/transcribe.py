@@ -1,5 +1,7 @@
 """Step 1 & 6: faster-whisper transcription with word-level timestamps.
 
+Word edges are then trimmed off measured pauses (see word_pauses).
+
 Output schema (a flat list of word entries):
     [{"text": str, "start": float_sec, "end": float_sec}, ...]
 """
@@ -9,7 +11,7 @@ import json
 import logging
 from pathlib import Path
 
-from . import names
+from . import names, word_pauses
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ def transcribe(
             candidate = max(matches)[1]
             log.info("Reusing existing transcript %s", candidate)
             words = names.fix_words(json.loads(candidate.read_text(encoding="utf-8")))
+            words = _repair_pauses(video_path, words)
             _write_words(out_path, words)
             return words
 
@@ -82,7 +85,7 @@ def transcribe(
     except Exception as e:  # noqa: BLE001
         raise RuntimeError(_whisper_error_hint(e, cfg)) from e
 
-    words = names.fix_words(words)
+    words = _repair_pauses(video_path, names.fix_words(words))
     _write_words(out_path, words)
     log.info("Wrote %d words to %s", len(words), out_path)
     return words
@@ -112,6 +115,17 @@ def _whisper_error_hint(e: Exception, cfg: Config) -> str:
             f"Original error: {e}"
         )
     return f"Whisper transcription failed: {e}"
+
+
+def _repair_pauses(media_path: Path, words: list[dict]) -> list[dict]:
+    """Trim each word off the measured pauses Whisper stretched it across."""
+    measured = word_pauses.measure_levels(media_path)
+    if measured is None:
+        return words
+    fixed = word_pauses.repair_words(words, *measured)
+    moved = sum(a is not b for a, b in zip(words, fixed, strict=True))
+    log.info("Word pauses: trimmed %d of %d words to their sound", moved, len(words))
+    return fixed
 
 
 def _write_words(out_path: Path, words: list[dict]) -> None:
