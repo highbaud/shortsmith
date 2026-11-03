@@ -391,7 +391,8 @@ export async function capture(options) {
   } finally {
     clearTimeout(timer);
     if (browser) await browser.close({silent: true});
-    await rm(profile, {recursive: true, force: true});
+    // Windows Chrome can still hold chrome_debug.log just after close (EBUSY).
+    await rm(profile, {recursive: true, force: true, maxRetries: 10, retryDelay: 100});
   }
 }
 
