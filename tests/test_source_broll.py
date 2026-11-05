@@ -39,6 +39,12 @@ def grok_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     grok.chmod(0o755)
     (tools / "wscript.exe").write_bytes(b"mocked process boundary")
     monkeypatch.setenv("PATH", str(tools))
+    # The Windows hidden route needs this launcher; do not depend on the dev machine having one.
+    home = tmp_path / "home"
+    (home / "Documents" / "Codex").mkdir(parents=True)
+    (home / "Documents" / "Codex" / "run-hidden.vbs").write_text("mocked process boundary")
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("HOME", str(home))
     return grok
 
 
