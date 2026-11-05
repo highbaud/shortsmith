@@ -48,6 +48,18 @@ jobs:
       - name: CLI help
         run: uv run shortsmith --help
 
+      # The media tests run real ffmpeg/ffprobe, and executable lookup needs them
+      # on PATH even where the call itself is mocked. Runners do not ship them.
+      - name: install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
       - name: pytest (unit tests)
         # pytest + pytest-mock are already installed by `uv sync --extra dev`;
         # no need to re-add them via --with.
