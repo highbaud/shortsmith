@@ -52,3 +52,28 @@ jobs:
         # pytest + pytest-mock are already installed by `uv sync --extra dev`;
         # no need to re-add them via --with.
         run: uv run pytest tests/ -v
+
+  remotion:
+    name: remotion tests + typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: remotion
+    steps:
+      - uses: actions/checkout@v7
+
+      # Node 24 matches the runtime the 23 Remotion tests were last verified on.
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: remotion/package-lock.json
+
+      - name: npm ci
+        run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: tests (contracts, captions, real-frame renders)
+        run: npm test

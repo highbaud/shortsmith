@@ -22,6 +22,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from .records import CaptionBand
+
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
 
 # A gallery frame is a bright tile (or two) floating on a dark surround. Mean
 # luminance below this counts as "frame furniture", not speaker video.
@@ -71,7 +77,7 @@ class StackLayout:
     height: int = OUT_H
 
     @property
-    def caption_band(self) -> dict[str, float]:
+    def caption_band(self) -> CaptionBand:
         """Caption band as height fractions, the shape Remotion's `captionBand`
         prop expects."""
         return {
@@ -157,7 +163,7 @@ def _runs(flags: list[bool], min_len: int) -> list[tuple[int, int]]:
 
 
 def detect_tiles(
-    gray,
+    gray: ArrayLike,
     dark_threshold: float = DEFAULT_DARK_THRESHOLD,
     min_tile_frac: float = 0.15,
 ) -> list[Rect]:

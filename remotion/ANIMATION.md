@@ -58,6 +58,9 @@ emphasizes, never decorates. Frequency of use is high → keep it short.
 - Keep all three **≤ ~400ms** and only on high-impact beats (frequency rule).
 
 ### B-roll (`src/BRoll.tsx`)
+The entry component selects cards from `src/broll/`; their shared shell keeps
+the same fades, type, colors, and asset premount behavior.
+
 - **Entrance:** scale-in + fade (Ken-Burns-style slow scale = subtle **parallax/
   float** so a static image feels alive). **Crossfade** out under the next.
 - **Origin-aware:** logo badges should **scale from their corner**, not center
@@ -93,3 +96,36 @@ Apply in `remotion/src`, then ALWAYS nuke the bundle cache before rendering
 4. `reducedMotion` prop → fade-only fallback for pops + VFX (accessibility).
 5. B-roll **origin-aware** logo scale + gentle **float/parallax** on photos.
 6. Verify all animated props are transform/opacity (no layout thrash).
+
+## Verification
+
+Use Node 24. `npm run test:unit` runs the fast contract and timing tests without a
+browser. `npm run test:render` runs the frame tests. `npm test` runs both groups;
+`npm run typecheck` checks production types.
+
+Frame tests use the installed Chrome, or `REMOTION_BROWSER_EXECUTABLE` for another local browser.
+Frame tests use generated local assets and replace external media/font loading.
+The production composition, card, caption, and VFX code runs in real Remotion frames.
+Tests close the browser and remove their own scratch under `.desloppify/`.
+
+For CI, run from `remotion/` after installing the lockfile with `npm ci`. Provision
+the Chrome build pinned by the locked Remotion renderer, then pass its path to
+the frame tests. The setup step below may download that browser; the tests do
+not download it or require a browser for the unit group.
+
+```bash
+set -e
+REMOTION_BROWSER_EXECUTABLE="$(
+node <<'JS'
+const {createRequire} = require("node:module");
+const renderer = createRequire(require.resolve("@remotion/cli"))("@remotion/renderer");
+renderer.ensureBrowser({logLevel: "error"}).then((browser) => {
+  if (!("path" in browser)) throw new Error("Pinned browser is not available");
+  process.stdout.write(browser.path);
+}).catch((error) => { console.error(error); process.exit(1); });
+JS
+)"
+export REMOTION_BROWSER_EXECUTABLE
+npm run test:unit
+npm run test:render
+```

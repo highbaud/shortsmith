@@ -148,17 +148,49 @@ The opening 2.6 s is a **slam hook** — full-screen accent type with scale-in +
 
 ### Step 10: Remotion captions + b-roll
 
-`scripts/apply_remotion.py` orchestrates b-roll generation and the render itself, and skips both when the existing output is already current:
+`shortsmith/rendering/apply_remotion.py` orchestrates b-roll generation and the render itself, and skips both when the existing output is already current:
 
-**Up-to-date check.** `scripts/render_stamp.py` fingerprints everything a render depends on: the Hyperframes base render (file size plus nanosecond-precision mtime, so a same-size base swapped inside one second still counts as changed), `words.json`, the clip's entry in `_clips.json`, any hand-authored `broll.json`, the photo state of every person the transcript names (manifest, manual, and cached photo), a SHA-256 digest of 25 render-relevant code and template files, and the style, platform, and captions switches. All of that hashes into one digest, written beside the output as `final_remotion.stamp.json`; a matching digest skips the render, and `render_stamp.changed_inputs()` reports what changed when it does not match. This replaced a plain mtime comparison against the Hyperframes base, which missed a resolver fix, a caption change, a new manual photo, or a corrected transcript, and let stale renders ship. A short with no stamp at all predates the stamp system and keeps the old mtime rule, so an unscoped `finalize.py` run does not silently rebuild the whole library; `--force` always rebuilds.
+**Up-to-date check.** `shortsmith/rendering/render_stamp.py` fingerprints everything a render depends on: the Hyperframes base render (file size plus nanosecond-precision mtime, so a same-size base swapped inside one second still counts as changed), `words.json`, the clip's entry in `_clips.json`, any hand-authored `broll.json`, the photo state of every person the transcript names (manifest, manual, and cached photo), a SHA-256 digest of render-relevant library code, browser capture code, and template files, and the style, platform, and captions switches. All of that hashes into one digest, written beside the output as `final_remotion.stamp.json`; a matching digest skips the render, and `render_stamp.changed_inputs()` reports what changed when it does not match. This replaced a plain mtime comparison against the Hyperframes base, which missed a resolver fix, a caption change, a new manual photo, or a corrected transcript, and let stale renders ship. A short with no stamp at all predates the stamp system and keeps the old mtime rule, so an unscoped `finalize.py` run does not silently rebuild the whole library; `--force` always rebuilds.
 
-**B-roll selection.** `scripts/gen_broll.py` reads the clip's words.json, identifies named brands (`scripts/brand_logos.py`: title-verified Simple Icons → Wikidata P154 → vectorlogo.zone) and persons (`scripts/person_photos.py`: name → verified Wikidata entity → photos bound to that entity), times them to the spoken word, and writes `broll.auto.json`. Both resolvers share `scripts/wikidata.py` and drop the slide rather than show an unverified asset.
+The reusable implementation lives in `shortsmith/rendering/`. The documented
+`apply_remotion.py`, `gen_broll.py`, `render_remotion.py`, `finalize.py`, and
+`add_sfx.py` paths under `scripts/`
+only launch the matching library `main` function. Python callers import the
+library directly. The hidden source-discovery worker runs with
+`python -m shortsmith.rendering.source_discovery`.
 
-**Render** — `scripts/render_remotion.py` invokes the Remotion project at `remotion/` (React + Remotion 4.0). Loads the Hyperframes `final.mp4` as a base layer, overlays word-by-word captions tied to `assets/words.json` timings, and inserts b-roll picks at their `broll.auto.json` timestamps. Output: `<project>/renders/final_remotion.mp4`.
+The [command index](../scripts/README.md) groups stable launch paths by task.
+The scripts directory is the command surface; library modules do not import it.
+Shared batch source lookup, project selection, failure handling, and retry
+markers live in `shortsmith/rendering/batch.py`.
+
+`project_inputs.py` owns base-video selection, clip metadata, and overlay timing.
+The renderer, B-roll planner, stamp builder, and thumbnail command use this public
+API. `mentions.py` finds curated names in speech. `broll_assets.py` owns verified
+asset downloads, local caches, and audits. This keeps the renderer independent
+of the B-roll planner and removes their former import cycle.
+
+`source_evidence.py` owns transcript timing and subject/claim checks.
+`source_resolution.py` owns original-page metadata and remote-source resolution.
+`source_broll.py` coordinates settings, candidate selection, verified cache reuse,
+and provenance. Public network and browser operations stay in `source_capture.py`,
+and search proposals stay in `source_discovery.py`. The browser capture script
+remains at `scripts/capture_source.mjs`.
+
+Each finalize run owns a `RenderStats` record and passes it to its apply calls.
+Calls without a record get private counts. No module counters or reset order are
+required. Existing paths for media, templates, prompts, caches, and work resolve
+from `shortsmith.config.REPO_ROOT`.
+
+**B-roll selection.** `shortsmith/rendering/gen_broll.py` reads the clip's words.json, identifies named brands (`shortsmith/rendering/brand_logos.py`: title-verified Simple Icons → Wikidata P154 → vectorlogo.zone) and persons (`shortsmith/rendering/person_photos.py`: name → verified Wikidata entity → photos bound to that entity), times them to the spoken word, and writes `broll.auto.json`. Both resolvers share `shortsmith/rendering/wikidata.py` and drop the slide rather than show an unverified asset.
+
+**Render** — `shortsmith/rendering/render_remotion.py` invokes the Remotion project at `remotion/` (React + Remotion 4.0). Loads the Hyperframes `final.mp4` as a base layer, overlays word-by-word captions tied to `assets/words.json` timings, and inserts b-roll picks at their `broll.auto.json` timestamps. Output: `<project>/renders/final_remotion.mp4`.
 
 ### Step 11: SFX overlay
 
-`shortsmith/sfx.py` + `scripts/add_sfx.py`. Mixes a curated SFX pack onto the speech track. Triggers:
+`shortsmith/sfx.py` plans and mixes the effects. `shortsmith/rendering/add_sfx.py`
+owns the batch command and shared state readers; finalization imports those
+readers directly. `scripts/add_sfx.py` remains the command launcher. Triggers:
 
 **Structural** (deterministic, tied to on-screen motion):
 - `hook-impact` at t=0 (opening slam)
@@ -175,7 +207,8 @@ Non-destructive: writes `final_sfx.mp4` next to the input. Re-runnable.
 
 ### Consolidate
 
-`scripts/finalize.py` is the authoritative orchestrator. Three phases:
+`shortsmith/rendering/finalize.py` is the authoritative orchestrator.
+`scripts/finalize.py` remains its command launcher. Three phases:
 
 - **Phase 0 (Remotion)**: for every short with a Hyperframes base render, regenerate `broll.auto.json` and produce `final_remotion.mp4`. Skips up-to-date and ungrounded shorts.
 - **Phase 1 (SFX)**: for every short with `clips.json` + `cut_manifests.json`, locate the SFX base (`final_remotion.mp4` if present, else newest `final.mp4`), mix SFX → `final_sfx.mp4`.

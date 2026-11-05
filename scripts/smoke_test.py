@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 
 from shortsmith import config, transcribe
+from shortsmith._files import atomic_write
+from shortsmith._process import resolve_executable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VIDEO = REPO_ROOT / "examples" / "sample_clip.mp4"
@@ -71,11 +73,11 @@ def main() -> int:
             "slug": "smoke-test",
         }
     ]
-    (work_dir / "clips.json").write_text(json.dumps(clips, indent=2), encoding="utf-8")
+    atomic_write(work_dir / "clips.json", json.dumps(clips, indent=2))
 
     # Steps 3-8: cut, clean, retranscribe, reframe, scaffold. No audio enhance.
     cmd = [
-        "uv", "run", "shortsmith", "run", str(VIDEO),
+        resolve_executable("uv"), "run", "shortsmith", "run", str(VIDEO),
         "--from-step", "3",
         "--no-enhance",
         "--max-clips", "1",
@@ -93,7 +95,7 @@ def main() -> int:
 
     # ffprobe sanity check
     probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-print_format", "json",
+        [resolve_executable("ffprobe"), "-v", "error", "-print_format", "json",
          "-show_streams", "-show_format", str(vertical)],
         capture_output=True, text=True, encoding="utf-8",
     )

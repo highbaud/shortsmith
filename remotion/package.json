@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "remotion studio",
     "render": "remotion render",
-    "upgrade": "remotion upgrade"
+    "upgrade": "remotion upgrade",
+    "test": "node --test tests/*.test.cjs",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --test tests/caption-timing.test.cjs tests/contracts.test.cjs",
+    "test:render": "node --test tests/vfx.test.cjs"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.540",

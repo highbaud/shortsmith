@@ -23,8 +23,10 @@ import logging
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 
 from ..config import Config
+from ..records import TranscriptWord
 from ._common import (
     load_system_prompt,
     parse_json_response,
@@ -36,7 +38,7 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_RETRIES = 3
 
 
-def call(words: list[dict], cfg: Config) -> list[dict]:
+def select_clips(words: Sequence[TranscriptWord], cfg: Config) -> list[object]:
     """Send transcript to a local OpenAI-compatible endpoint. Retries on bad JSON."""
     base_url = cfg.local_llm_url.rstrip("/")
     model = cfg.local_llm_model
@@ -62,7 +64,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
         try:
             raw = _post_chat(base_url, model, system_prompt, user_msg,
                              temperature=cfg.local_llm_temperature,
-                             max_tokens=getattr(cfg, "clip_max_tokens", 32000))
+                             max_tokens=cfg.clip_max_tokens)
             return parse_json_response(raw)
         except (json.JSONDecodeError, ValueError) as e:
             log.warning("ollama: bad JSON on attempt %d/%d: %s",
@@ -85,7 +87,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
     )
 
 
-def review(system_prompt: str, user_input: str, cfg: Config) -> list[dict]:
+def review_story_plans(system_prompt: str, user_input: str, cfg: Config) -> list[object]:
     """Run a separate story check without accepting an unfinished response."""
     base_url = cfg.local_llm_url.rstrip("/")
     user_msg = user_input + "\n\nReturn ONLY the JSON array. No prose or markdown fences."

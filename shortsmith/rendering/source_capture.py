@@ -1,8 +1,8 @@
 """Fetch and capture public sources without reaching private networks or user sessions.
 
 The HTTP deadline matches gen_broll's 20-second timeout. Chromium navigation uses
-the bundled Puppeteer's 30-second default; the outer timeout covers both phases.
-"""
+the bundled Puppeteer's 30-second default; the outer timeout covers both phases."""
+
 from __future__ import annotations
 
 import http.client
@@ -18,15 +18,26 @@ import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from cv2.typing import MatLike
+
+from shortsmith._process import resolve_executable
+from shortsmith.config import REPO_ROOT
 
 HTTP_TIMEOUT = 20
+
 BROWSER_TIMEOUT = 30
-# At most a 2x-density 1080x1920 source, including 3840x2160 landscape images.
+
 MAX_IMAGE_PIXELS = (1080 * 2) * (1920 * 2)
-# One uncompressed 16-bit RGBA source frame is the HTTP body budget.
+
 MAX_BODY_BYTES = MAX_IMAGE_PIXELS * 4 * 2
-_ROOT = Path(__file__).resolve().parent.parent
+
+_ROOT = REPO_ROOT
+
 _UA = "ShortSmith public-source capture"
+
 _REDIRECTS = {301, 302, 303, 307, 308}
 
 
@@ -68,14 +79,18 @@ def _public_addresses(host: str, port: int) -> list[str]:
     answers = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     if not answers:
         raise ValueError("Source host has no public address")
-    addresses = list(dict.fromkeys(answer[4][0] for answer in answers))
-    for address in addresses:
+    addresses: list[str] = []
+    for address in dict.fromkeys(answer[4][0] for answer in answers):
+        if not isinstance(address, str):
+            raise ValueError("Source host returned an invalid IP address")
         _check_public_address(ipaddress.ip_address(address))
+        addresses.append(address)
     return addresses
 
 
-def _read_response(response: http.client.HTTPResponse, deadline: float,
-                   connection_socket: socket.socket | None) -> bytes:
+def _read_response(
+    response: http.client.HTTPResponse, deadline: float, connection_socket: socket.socket | None
+) -> bytes:
     encoding = response.getheader("Content-Encoding", "identity").strip().lower()
     if encoding != "identity":
         raise ValueError("Public source uses an unexpected content encoding")
@@ -104,9 +119,11 @@ def _request_public(url: str, deadline: float) -> tuple[bytes, str, str | None]:
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         raise TimeoutError("Public source download exceeded the HTTP deadline")
-    connection_type = (http.client.HTTPSConnection if parsed.scheme == "https"
-                       else http.client.HTTPConnection)
+    connection_type = (
+        http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    )
     connection = connection_type(host, port, timeout=remaining)
+
     # Pin the checked address. HTTPSConnection still validates TLS for `host`.
     def connect_checked(*args: object, **kwargs: object) -> socket.socket:
         remaining = deadline - time.monotonic()
@@ -114,10 +131,13 @@ def _request_public(url: str, deadline: float) -> tuple[bytes, str, str | None]:
             raise TimeoutError("Public source download exceeded the HTTP deadline")
         return socket.create_connection((address, port), timeout=remaining)
 
-    connection._create_connection = connect_checked
+    # CPython stores this hook on the instance; its stub omits it.
+    vars(connection)["_create_connection"] = connect_checked
     target = urllib.parse.urlunsplit(("", "", parsed.path or "/", parsed.query, ""))
     try:
-        connection.request("GET", target, headers={"User-Agent": _UA, "Accept-Encoding": "identity"})
+        connection.request(
+            "GET", target, headers={"User-Agent": _UA, "Accept-Encoding": "identity"}
+        )
         connection_socket = connection.sock
         response = connection.getresponse()
         if response.status in _REDIRECTS:
@@ -182,8 +202,21 @@ def _raster_dimensions(data: bytes) -> tuple[int, int]:
                 length = struct.unpack_from(">H", data, offset)[0]
                 if length < 2 or offset + length > len(data):
                     break
-                if marker in {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
-                              0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}:
+                if marker in {
+                    0xC0,
+                    0xC1,
+                    0xC2,
+                    0xC3,
+                    0xC5,
+                    0xC6,
+                    0xC7,
+                    0xC9,
+                    0xCA,
+                    0xCB,
+                    0xCD,
+                    0xCE,
+                    0xCF,
+                }:
                     height, width = struct.unpack_from(">HH", data, offset + 3)
                     return width, height
                 offset += length
@@ -199,15 +232,19 @@ def _raster_dimensions(data: bytes) -> tuple[int, int]:
                     if tag in dimensions:
                         raise ValueError("Source image has duplicate raster dimensions")
                     dimensions[tag] = struct.unpack_from(
-                        endian + ("H" if kind == 3 else "I"), data, entry + 8,
+                        endian + ("H" if kind == 3 else "I"),
+                        data,
+                        entry + 8,
                     )[0]
             if len(dimensions) == 2:
                 return dimensions[256], dimensions[257]
         if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
             kind = data[12:16]
             if kind == b"VP8X" and len(data) >= 30:
-                return (1 + int.from_bytes(data[24:27], "little"),
-                        1 + int.from_bytes(data[27:30], "little"))
+                return (
+                    1 + int.from_bytes(data[24:27], "little"),
+                    1 + int.from_bytes(data[27:30], "little"),
+                )
             if kind == b"VP8 " and data[23:26] == b"\x9d\x01\x2a":
                 width, height = struct.unpack_from("<HH", data, 26)
                 return width & 0x3FFF, height & 0x3FFF
@@ -219,12 +256,19 @@ def _raster_dimensions(data: bytes) -> tuple[int, int]:
     raise ValueError("Source image has invalid or unsupported raster dimensions")
 
 
-def _decode_raster(data: bytes) -> object:
+def _decode_raster(data: bytes) -> MatLike:
     import cv2
     import numpy as np
 
-    signatures = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a",
-                  b"BM", b"II*\x00", b"MM\x00*")
+    signatures = (
+        b"\x89PNG\r\n\x1a\n",
+        b"\xff\xd8\xff",
+        b"GIF87a",
+        b"GIF89a",
+        b"BM",
+        b"II*\x00",
+        b"MM\x00*",
+    )
     is_webp = data.startswith(b"RIFF") and data[8:12] == b"WEBP"
     if not data.startswith(signatures) and not is_webp:
         raise ValueError("Source image is not a supported raster image")
@@ -277,27 +321,45 @@ def capture_page(url: str, dest: Path, *, selector: str | None = None, quote: st
     """Save an original page screenshot; an exact quote can guide the DOM crop."""
     _require_online()
     _public_url(url)
-    node = shutil.which("node")
-    if not node:
+    try:
+        node = resolve_executable("node")
+    except (FileNotFoundError, ValueError) as error:
+        raise RuntimeError("Page capture needs the existing Node.js runtime") from error
+    node_command = shutil.which(node) if os.name != "nt" else node
+    if not node_command:
         raise RuntimeError("Page capture needs the existing Node.js runtime")
     dest = Path(dest).with_suffix(".png")
     dest.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="shortsmith-source-") as directory:
         screenshot = Path(directory) / "original.png"
-        payload = json.dumps({"url": url, "dest": str(screenshot), "selector": selector,
-                              "quote": quote, "httpTimeout": HTTP_TIMEOUT * 1000,
-                              "browserTimeout": BROWSER_TIMEOUT * 1000})
+        payload = json.dumps(
+            {
+                "url": url,
+                "dest": str(screenshot),
+                "selector": selector,
+                "quote": quote,
+                "httpTimeout": HTTP_TIMEOUT * 1000,
+                "browserTimeout": BROWSER_TIMEOUT * 1000,
+            }
+        )
         try:
             result = subprocess.run(
-                [node, str(Path(__file__).with_name("capture_source.mjs"))],
-                input=payload, capture_output=True, text=True, encoding="utf-8",
-                cwd=_ROOT / "remotion", timeout=HTTP_TIMEOUT + BROWSER_TIMEOUT * 2,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
+                [node_command, str(REPO_ROOT / "scripts" / "capture_source.mjs")],
+                input=payload,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                cwd=_ROOT / "remotion",
+                timeout=HTTP_TIMEOUT + BROWSER_TIMEOUT * 2,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise RuntimeError(f"Public page capture failed: {error}") from error
         if result.returncode or not screenshot.is_file():
-            raise RuntimeError(f"Public page capture failed: {result.stderr.strip() or 'no screenshot'}")
+            raise RuntimeError(
+                f"Public page capture failed: {result.stderr.strip() or 'no screenshot'}"
+            )
         data = screenshot.read_bytes()
         _decode_raster(data)
         return _write_atomic(dest, data)

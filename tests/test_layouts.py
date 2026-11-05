@@ -75,7 +75,7 @@ def test_faces_lean_towards_the_middle_of_the_frame():
 
 
 def test_captions_still_fit_between_the_panels():
-    from scripts.render_remotion import fit_caption_font
+    from shortsmith.rendering.render_remotion import fit_caption_font
 
     lay = load_preset().layout()
     assert fit_caption_font(lay.caption_band) >= 60  # still legible on a phone

@@ -1,48 +1,55 @@
-"""Decide whether a short's Remotion render is current.
+"""Fingerprint render inputs and check whether an output is current."""
 
-apply_remotion used to compare one pair of mtimes: final_remotion.mp4 against
-the Hyperframes base render. That misses everything else a render reads. A
-resolver fix, a caption change, a new manual photo, a corrected transcript:
-none of them touch the base, so none of them re-rendered anything, and the
-July 31 batch re-shipped a photo of the wrong person because of it.
-
-The stamp is a digest of every input the render depends on: the base render,
-the clip spec, the words, the hand-authored b-roll list, the photo state of
-every person the words mention, the render code, and the style / platform /
-captions switches. It is written beside the output after a successful render
-and compared before the next one. Different digest, different render. A short
-with no stamp at all was rendered before stamps existed; the caller decides how
-to treat that (apply_remotion keeps the old mtime rule for it, so an unscoped
-finalize does not rebuild the whole library by surprise).
-"""
 from __future__ import annotations
 
 import hashlib
 import json
-import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import NotRequired, TypedDict, TypeGuard
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import gen_broll  # noqa: E402
-from render_remotion import _clip_for  # noqa: E402
+from shortsmith._files import atomic_write
+from shortsmith.config import REPO_ROOT
+from shortsmith.records import ClipSpec, TranscriptWord
 
-SHORTSMITH_ROOT = Path(__file__).resolve().parent.parent
+from . import broll_assets, mentions, project_inputs, source_broll
+
+SHORTSMITH_ROOT = REPO_ROOT
+
 STAMP_NAME = "final_remotion.stamp.json"
+
 STAMP_VERSION = 1
 
-# Everything whose text decides what a render looks like. A change to any of
-# these re-renders every short on the next pass (that is the point).
 CODE_GLOBS = (
-    "scripts/render_remotion.py", "scripts/render_stamp.py",
-    "scripts/apply_remotion.py", "scripts/gen_broll.py",
-    "scripts/person_photos.py", "scripts/brand_logos.py", "scripts/wikidata.py",
-    "scripts/source_broll.py", "scripts/source_capture.py", "scripts/source_discovery.py",
+    "shortsmith/rendering/*.py",
     "scripts/capture_source.mjs",
-    "shortsmith/vfx.py", "shortsmith/layouts.py", "shortsmith/gallery.py",
-    "shortsmith/names.py", "shortsmith/sfx.py", "shortsmith/config.py",
-    "templates/layouts/*.json", "templates/styles/*/style.json",
-    "remotion/src/*.ts", "remotion/src/*.tsx", "remotion/package.json",
+    "shortsmith/vfx.py",
+    "shortsmith/layouts.py",
+    "shortsmith/gallery.py",
+    "shortsmith/names.py",
+    "shortsmith/sfx.py",
+    "shortsmith/config.py",
+    "templates/layouts/*.json",
+    "templates/styles/*/style.json",
+    "remotion/src/**/*.ts",
+    "remotion/src/**/*.tsx",
+    "remotion/package.json",
 )
+
+
+type StampInput = str | bool | list[str]
+
+
+class ComputedStamp(TypedDict):
+    version: int
+    digest: str
+    inputs: dict[str, StampInput]
+
+
+class StoredStamp(TypedDict):
+    digest: object
+    version: NotRequired[object]
+    inputs: NotRequired[dict[str, object]]
 
 
 def _digest(data: bytes) -> str:
@@ -71,24 +78,29 @@ def code_digest(root: Path = SHORTSMITH_ROOT) -> str:
     return _digest("\n".join(parts).encode("utf-8"))
 
 
-def people_digest(words: list[dict]) -> str:
+def people_digest(words: Sequence[TranscriptWord]) -> str:
     """The photo state of every person the words mention.
 
     Scoped to the people this short can show, so dropping in a manual photo
     of David Schwartz re-renders the shorts that name him and no others.
     """
-    manifest = gen_broll._read_manifest()
+    manifest = broll_assets._read_manifest()
     parts: list[str] = []
-    for name, _role, _t in gen_broll.find_person_mentions(words):
-        slug = gen_broll._slug(name)
-        manual = gen_broll._manual_person_photo(slug)
-        cached = gen_broll._cached_person_photo(slug)
-        parts.append(json.dumps({
-            "name": name,
-            "manifest": manifest.get(name),
-            "manual": f"{manual.name}:{_file_digest(manual)}" if manual else "",
-            "cached": f"{cached.name}:{_file_digest(cached)}" if cached else "",
-        }, sort_keys=True))
+    for name, _role, _t in mentions.find_person_mentions(words):
+        slug = broll_assets._slug(name)
+        manual = broll_assets._manual_person_photo(slug)
+        cached = broll_assets._cached_person_photo(slug)
+        parts.append(
+            json.dumps(
+                {
+                    "name": name,
+                    "manifest": manifest.get(name),
+                    "manual": f"{manual.name}:{_file_digest(manual)}" if manual else "",
+                    "cached": f"{cached.name}:{_file_digest(cached)}" if cached else "",
+                },
+                sort_keys=True,
+            )
+        )
     return _digest("\n".join(parts).encode("utf-8"))
 
 
@@ -123,19 +135,24 @@ def source_assets_digest(project_dir: Path, enabled: frozenset[str]) -> str:
     return _digest(json.dumps(entries, sort_keys=True).encode("utf-8"))
 
 
-def compute_stamp(project_dir: Path, *, base: Path, style: str, platform: str,
-                  captions: bool, sources: str | None = None) -> dict:
-    import source_broll
-
+def compute_stamp(
+    project_dir: Path,
+    *,
+    base: Path,
+    style: str,
+    platform: str,
+    captions: bool,
+    sources: str | None = None,
+) -> ComputedStamp:
     project_dir = Path(project_dir)
     words_path = project_dir / "assets" / "words.json"
     try:
         words = json.loads(words_path.read_text(encoding="utf-8")) if words_path.exists() else []
     except (json.JSONDecodeError, OSError):
         words = []
-    clip = _clip_for(project_dir) or {}
+    clip: ClipSpec | dict = project_inputs.clip_for(project_dir) or {}
     enabled = source_broll.enabled_sources(project_dir, sources)
-    inputs = {
+    inputs: dict[str, StampInput] = {
         "base": _file_stat(base),
         "words": _file_digest(words_path),
         "clip": _digest(json.dumps(clip, sort_keys=True, ensure_ascii=False).encode("utf-8")),
@@ -169,25 +186,34 @@ def has_stamp(project_dir: Path) -> bool:
     return stamp_path(project_dir).exists()
 
 
-def read_stamp(project_dir: Path) -> dict | None:
+def _is_stored_stamp(data: object) -> TypeGuard[StoredStamp]:
+    """Check parsed JSON without filtering fields from older stamp versions."""
+    return (
+        isinstance(data, dict)
+        and "digest" in data
+        and ("inputs" not in data or isinstance(data["inputs"], dict))
+    )
+
+
+def read_stamp(project_dir: Path) -> StoredStamp | None:
     path = stamp_path(project_dir)
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except (ValueError, OSError):
         return None
-    return data if isinstance(data, dict) and "digest" in data else None
+    return data if _is_stored_stamp(data) else None
 
 
-def write_stamp(project_dir: Path, stamp: dict) -> Path:
+def write_stamp(project_dir: Path, stamp: Mapping[str, object]) -> Path:
     path = stamp_path(project_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(stamp, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write(path, json.dumps(stamp, indent=2, sort_keys=True))
     return path
 
 
-def changed_inputs(prior: dict | None, current: dict) -> list[str]:
+def changed_inputs(prior: StoredStamp | None, current: ComputedStamp) -> list[str]:
     """Which inputs differ between a recorded stamp and the current one."""
     if not prior:
         return ["no stamp"]
@@ -198,7 +224,7 @@ def changed_inputs(prior: dict | None, current: dict) -> list[str]:
     return [key for key in after if before.get(key) != after[key]]
 
 
-def is_current(project_dir: Path, current: dict, output: Path) -> bool:
+def is_current(project_dir: Path, current: ComputedStamp, output: Path) -> bool:
     """True when the output exists and was rendered from exactly these inputs."""
     if not Path(output).exists():
         return False
@@ -207,5 +233,6 @@ def is_current(project_dir: Path, current: dict, output: Path) -> bool:
         return False
     # Version first: bumping STAMP_VERSION exists to force a re-render, so a
     # matching digest under an older version must not read as current.
-    return (prior.get("version") == current.get("version")
-            and prior.get("digest") == current.get("digest"))
+    return prior.get("version") == current.get("version") and prior.get("digest") == current.get(
+        "digest"
+    )

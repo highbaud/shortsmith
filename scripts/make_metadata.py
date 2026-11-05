@@ -20,38 +20,31 @@ import re
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import render_remotion as rr  # noqa: E402  (_probe_duration)
-
-from shortsmith.config import AUTO_SHORTS_ROOT  # noqa: E402
-from shortsmith.scaffold import normalize_dashes  # noqa: E402
+from shortsmith._files import atomic_write
+from shortsmith.captions import normalize_dashes
+from shortsmith.config import AUTO_SHORTS_ROOT
+from shortsmith.rendering import project_inputs
 
 KIT_RENDERS = AUTO_SHORTS_ROOT.parent.parent / "renders"
 ALL_DIR = KIT_RENDERS / "_all"
 
 
-def _deliverable(proj: Path) -> Path | None:
-    r = proj / "renders"
-    for name in ("final_sfx.mp4", "final_remotion.mp4"):
-        if (r / name).exists():
-            return r / name
-    cands = [p for p in r.glob("*.mp4") if not p.stem.startswith("_")] if r.is_dir() else []
-    return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
-
-
-def _broll_keywords(proj: Path) -> list[str]:
+def _broll_keywords(project_dir: Path) -> list[str]:
     """Pull the named entities the b-roll engine detected (brands / people) —
     these double as discovery keywords/tags. Reads broll.auto.json defensively."""
     out: list[str] = []
-    bp = proj / "broll.auto.json"
+    bp = project_dir / "broll.auto.json"
     if not bp.exists():
         return out
     try:
         data = json.loads(bp.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
-        print(f"warning: {proj.name}: broll.auto.json unreadable ({e})")
+        print(f"warning: {project_dir.name}: broll.auto.json unreadable ({e})")
         return out
-    slides = data if isinstance(data, list) else data.get("slides", [])
+    slides = data.get("slides", []) if isinstance(data, dict) else data
+    if not isinstance(slides, list):
+        print(f"warning: {project_dir.name}: broll.auto.json must contain a slide list")
+        return out
     for s in slides:
         if not isinstance(s, dict):
             continue
@@ -69,33 +62,33 @@ def _broll_keywords(proj: Path) -> list[str]:
     return uniq
 
 
-def build(proj: Path, clips_by_rank: dict[int, dict]) -> dict | None:
-    m = re.match(r"short-(\d+)-", proj.name)
+def build_project_metadata(project_dir: Path, clips_by_rank: dict[int, dict]) -> dict | None:
+    m = re.match(r"short-(\d+)-", project_dir.name)
     if not m:
         return None
     rank = int(m.group(1))
     clip = clips_by_rank.get(rank, {})
-    deliv = _deliverable(proj)
-    cap = proj / "caption.txt"
-    description = cap.read_text(encoding="utf-8").strip() if cap.exists() else \
+    deliverable = project_inputs.finalized_deliverable(project_dir)
+    caption_path = project_dir / "caption.txt"
+    description = caption_path.read_text(encoding="utf-8").strip() if caption_path.exists() else \
         (clip.get("instagram_caption") or "").strip()
 
     hook = clip.get("hook") or {}
-    keywords = _broll_keywords(proj)
+    keywords = _broll_keywords(project_dir)
     overline = (hook.get("overline") or "").strip()
     if overline and overline not in keywords:
         keywords.insert(0, overline)
 
-    thumb = None
-    base = f"{proj.parent.name}__{proj.name}"
+    thumbnail_path = None
+    base = f"{project_dir.parent.name}__{project_dir.name}"
     if (ALL_DIR / f"{base}.jpg").exists():
-        thumb = str(ALL_DIR / f"{base}.jpg")
-    elif (proj / "renders" / "thumb.jpg").exists():
-        thumb = str(proj / "renders" / "thumb.jpg")
+        thumbnail_path = str(ALL_DIR / f"{base}.jpg")
+    elif (project_dir / "renders" / "thumb.jpg").exists():
+        thumbnail_path = str(project_dir / "renders" / "thumb.jpg")
 
     return {
-        "source": proj.parent.name,
-        "short": proj.name,
+        "source": project_dir.parent.name,
+        "short": project_dir.name,
         "rank": rank,
         "title": normalize_dashes((clip.get("hook_text") or "").strip()),
         "label": normalize_dashes(overline),            # the hook eyebrow
@@ -104,11 +97,11 @@ def build(proj: Path, clips_by_rank: dict[int, dict]) -> dict | None:
         "keywords": [normalize_dashes(k) for k in keywords],  # detected entities (NOT hashtags)
         "callouts": [normalize_dashes(c.get("text", "")) for c in (clip.get("callouts") or []) if c.get("text")],
         "viral_score": clip.get("viral_score"),
-        "duration_seconds": round(rr._probe_duration(deliv), 2) if deliv else None,
+        "duration_seconds": round(project_inputs.probe_duration(deliverable), 2) if deliverable else None,
         "width": 1080,
         "height": 1920,
-        "thumbnail": thumb,
-        "deliverable": str(deliv) if deliv else None,
+        "thumbnail": thumbnail_path,
+        "deliverable": str(deliverable) if deliverable else None,
     }
 
 
@@ -126,18 +119,18 @@ def main() -> int:
                         clips_by_rank[int(c["rank"])] = c
             except (json.JSONDecodeError, OSError, ValueError, TypeError) as e:
                 print(f"warning: {src_dir.name}: _clips.json unreadable ({e})")
-        for proj in sorted(src_dir.glob("short-*")):
-            if not proj.is_dir():
+        for project_dir in sorted(src_dir.glob("short-*")):
+            if not project_dir.is_dir():
                 continue
-            meta = build(proj, clips_by_rank)
-            if not meta:
+            metadata = build_project_metadata(project_dir, clips_by_rank)
+            if not metadata:
                 continue
-            (proj / "metadata.json").write_text(
-                json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write(project_dir / "metadata.json",
+                         json.dumps(metadata, indent=2, ensure_ascii=False))
             if ALL_DIR.exists():
-                base = f"{proj.parent.name}__{proj.name}"
-                (ALL_DIR / f"{base}.json").write_text(
-                    json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+                base = f"{project_dir.parent.name}__{project_dir.name}"
+                atomic_write(ALL_DIR / f"{base}.json",
+                             json.dumps(metadata, indent=2, ensure_ascii=False))
             written += 1
     print(f"Wrote metadata.json for {written} shorts.")
     return 0

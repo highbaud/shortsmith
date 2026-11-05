@@ -29,6 +29,8 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from shortsmith._files import atomic_write
+
 ROOT = Path(__file__).resolve().parent.parent
 LEDGER = ROOT / "scheduled_ledger.json"
 
@@ -210,15 +212,12 @@ def match_and_score(ledger: list[dict], analytics: list[dict],
 
 def emit(scored: list[dict], out_dir: Path, top_n: int = 15) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "performance.json").write_text(
-        json.dumps(scored, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(out_dir / "performance.json", json.dumps(scored, indent=2, ensure_ascii=False))
 
     top = [s["topic"] for s in scored[:top_n]]
     weak = [s["topic"] for s in scored[-top_n:]][::-1] if len(scored) > top_n else []
-    (out_dir / "top_topics.json").write_text(
-        json.dumps(top, indent=2, ensure_ascii=False), encoding="utf-8")
-    (out_dir / "weak_topics.json").write_text(
-        json.dumps(weak, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(out_dir / "top_topics.json", json.dumps(top, indent=2, ensure_ascii=False))
+    atomic_write(out_dir / "weak_topics.json", json.dumps(weak, indent=2, ensure_ascii=False))
 
     lines = ["# Clip-picking calibration (from real post performance)", ""]
     lines.append(f"Matched {len(scored)} topics to analytics.\n")
@@ -232,7 +231,7 @@ def emit(scored: list[dict], out_dir: Path, top_n: int = 15) -> None:
         for s in scored[-top_n:][::-1]:
             lines.append(f"- {s['topic']} - score {s['score']:.0f} "
                          f"({int(s['metrics']['views'])} views)")
-    (out_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_write(out_dir / "report.md", "\n".join(lines) + "\n")
 
 
 def main() -> int:
@@ -246,11 +245,16 @@ def main() -> int:
 
     raw_inputs = []
     if args.analytics.is_dir():
+        unreadable = []
         for p in sorted(args.analytics.glob("*.json")):
             try:
                 raw_inputs.append(json.loads(p.read_text(encoding="utf-8")))
             except (json.JSONDecodeError, OSError):
-                print(f"  ! skipping malformed {p.name}")
+                unreadable.append(p.name)
+        if unreadable:
+            # A partial join would silently skew the calibration; fix or move the files.
+            print(f"analytics files are not readable JSON: {', '.join(unreadable)}")
+            return 1
     elif args.analytics.exists():
         try:
             raw_inputs.append(json.loads(args.analytics.read_text(encoding="utf-8")))

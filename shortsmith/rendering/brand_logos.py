@@ -21,24 +21,22 @@ Digital and Starlink. Resolution order:
                         retired Coinbase "C"), so it goes last and only answers
                         where the two verified sources didn't.
 
-Nothing found means no slide. A wrong logo is worse than no logo.
-"""
+Nothing found means no slide. A wrong logo is worse than no logo."""
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
 
-import wikidata
-from wikidata import HUMAN, Fetch
+from . import wikidata
+from .wikidata import HUMAN, Fetch
 
-# Pinned QIDs for brands whose name is ambiguous or whose Wikidata label differs
-# from how the transcript says it. Verified via `gen_broll.py --audit-brands`.
 BRAND_QIDS: dict[str, str] = {
     "BlackRock": "Q219635",
-    "JPMorgan": "Q192314",              # labelled "JPMorgan Chase"
-    "Vanguard": "Q849363",              # labelled "The Vanguard Group"
+    "JPMorgan": "Q192314",  # labelled "JPMorgan Chase"
+    "Vanguard": "Q849363",  # labelled "The Vanguard Group"
     "Berkshire Hathaway": "Q217583",
-    "Anchorage": "Q110660778",          # labelled "Anchorage Digital"
+    "Anchorage": "Q110660778",  # labelled "Anchorage Digital"
     "Starlink": "Q19867977",
     # Pinned to the RIGHT company even though it has no logo on Wikidata: search
     # otherwise lands on Fidelity International (Q5446786), a separate firm from
@@ -47,16 +45,16 @@ BRAND_QIDS: dict[str, str] = {
     "Fidelity": "Q1411292",
 }
 
-# Brand words that are also ordinary words or unrelated products. These never
-# resolve by search from ANY source; only a pinned QID can supply them.
-#
-# Every one of these was caught producing a confidently-wrong mark: "swift"
-# serves Apple's Swift language rather than the interbank network, "quant"
-# resolved to the TV series Quantico, "xdc" to Sony's XDCAM, and "circle",
-# "flare" and "anchorage" are common nouns before they are companies.
-AMBIGUOUS_BRANDS = frozenset({
-    "swift", "circle", "flare", "quant", "anchorage", "xdc",
-})
+AMBIGUOUS_BRANDS = frozenset(
+    {
+        "swift",
+        "circle",
+        "flare",
+        "quant",
+        "anchorage",
+        "xdc",
+    }
+)
 
 SVG_TITLE = re.compile(rb"<title[^>]*>(.*?)</title>", re.DOTALL)
 
@@ -66,9 +64,9 @@ class LogoResult:
     """A downloaded logo plus where it came from, for the audit trail."""
 
     data: bytes
-    ext: str      # ".svg" | ".png" | ".jpg"
-    source: str   # "simple-icons" | "wikidata-p154" | "vectorlogo.zone"
-    detail: str   # slug, Commons filename, or QID (whatever identifies the pick)
+    ext: str  # ".svg" | ".png" | ".jpg"
+    source: str  # "simple-icons" | "wikidata-p154" | "vectorlogo.zone"
+    detail: str  # slug, Commons filename, or QID (whatever identifies the pick)
 
     @property
     def is_verified(self) -> bool:
@@ -102,9 +100,6 @@ def _sniff_ext(raw: bytes, fallback: str) -> str:
     return fallback
 
 
-# --------------------------------------------------------------------------- #
-# 1. Simple Icons
-# --------------------------------------------------------------------------- #
 def _svg_title(raw: bytes) -> str:
     match = SVG_TITLE.search(raw)
     return match.group(1).decode("utf-8", "replace").strip() if match else ""
@@ -124,15 +119,12 @@ def from_simple_icons(fetch: Fetch, brand: str) -> LogoResult | None:
     return LogoResult(data=raw, ext=".svg", source="simple-icons", detail=slug)
 
 
-# --------------------------------------------------------------------------- #
-# 2. Wikidata P154
-# --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class BrandIdentity:
     qid: str
     label: str
     description: str = ""
-    logo: str | None = None   # P154 Commons filename
+    logo: str | None = None  # P154 Commons filename
     pinned: bool = False
 
     def summary(self) -> str:
@@ -155,15 +147,12 @@ def _build_brand(qid: str, entity: dict, *, pinned: bool) -> BrandIdentity:
     )
 
 
-# Properties only an operating company carries. A band, film or animal sharing
-# the brand's name has none of them, which is how "Kraken" stopped resolving to
-# a Colombian metal band whose Wikidata label is, accurately, "Kraken".
 COMPANY_SIGNALS = (
-    "P452",   # industry
-    "P159",   # headquarters location
+    "P452",  # industry
+    "P159",  # headquarters location
     "P1454",  # legal form
-    "P414",   # stock exchange
-    "P169",   # chief executive officer
+    "P414",  # stock exchange
+    "P169",  # chief executive officer
     "P2403",  # total assets
     "P1128",  # employees
 )
@@ -229,14 +218,14 @@ def from_wikidata(fetch: Fetch, brand: str) -> LogoResult | None:
     raw = fetch(wikidata.commons_file_url(identity.logo, width=1024))
     if not raw or len(raw) < 200:
         return None
-    return LogoResult(data=raw, ext=_sniff_ext(raw, _ext_of(identity.logo)),
-                      source="wikidata-p154",
-                      detail=f"{identity.qid} {identity.logo}")
+    return LogoResult(
+        data=raw,
+        ext=_sniff_ext(raw, _ext_of(identity.logo)),
+        source="wikidata-p154",
+        detail=f"{identity.qid} {identity.logo}",
+    )
 
 
-# --------------------------------------------------------------------------- #
-# 3. vectorlogo.zone (unverified, last resort)
-# --------------------------------------------------------------------------- #
 def from_vectorlogo(fetch: Fetch, brand: str) -> LogoResult | None:
     slug = slugify(brand)
     if slug in AMBIGUOUS_BRANDS:
@@ -247,9 +236,6 @@ def from_vectorlogo(fetch: Fetch, brand: str) -> LogoResult | None:
     return LogoResult(data=raw, ext=".svg", source="vectorlogo.zone", detail=slug)
 
 
-# --------------------------------------------------------------------------- #
-# Chain
-# --------------------------------------------------------------------------- #
 RESOLVERS = (from_simple_icons, from_wikidata, from_vectorlogo)
 
 

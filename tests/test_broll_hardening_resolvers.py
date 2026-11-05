@@ -11,17 +11,13 @@ from __future__ import annotations
 
 import http.client
 import json
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import brand_logos  # noqa: E402
-import gen_broll  # noqa: E402
-import person_photos as pp  # noqa: E402
-import wikidata  # noqa: E402
+from shortsmith.rendering import brand_logos, broll_assets, gen_broll, wikidata
+from shortsmith.rendering import person_photos as pp
 
 
 def make_fetch(routes: dict[str, dict]):
@@ -53,26 +49,26 @@ def test_person_slide_survives_the_render_time_reverification(
     already on disk, reporting it as "no verified photo".
     """
     short = tmp_path / "short-01-probe"
-    monkeypatch.setattr(gen_broll, "_download_person",
-                        lambda name, out_dir, **kw: f"assets/broll/person-{gen_broll._slug(name)}.jpg")
+    monkeypatch.setattr(broll_assets, '_download_person',
+                        lambda name, out_dir, **kw: f"assets/broll/person-{broll_assets._slug(name)}.jpg")
     slide = {"type": "person", "start": 5.0, "end": 9.0,
              "person": "Michael Saylor", "role": "Chairman, MicroStrategy"}
 
-    resolved = gen_broll._resolve_assets([dict(slide)], short, dry_run=False)
+    resolved = broll_assets.resolve_assets([dict(slide)], short, dry_run=False)
     assert resolved[0]["person"] == "Michael Saylor"
 
-    kept = gen_broll.verify_person_slides(resolved, short)
+    kept = broll_assets.verify_person_slides(resolved, short)
     assert [s["src"] for s in kept] == ["assets/broll/person-michaelsaylor.jpg"]
 
 
 def test_logo_slide_keeps_the_brand_it_was_fetched_for(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(gen_broll, "_download_logo",
+    monkeypatch.setattr(broll_assets, '_download_logo',
                         lambda brand, out_dir: ("assets/broll/logo-ripple.svg", False))
     slide = {"type": "logo", "start": 12.0, "end": 14.2, "brand": "Ripple"}
 
-    resolved = gen_broll._resolve_assets([slide], tmp_path / "short-01-probe", dry_run=False)
+    resolved = broll_assets.resolve_assets([slide], tmp_path / "short-01-probe", dry_run=False)
     assert resolved[0]["brand"] == "Ripple"
     assert resolved[0]["src"] == "assets/broll/logo-ripple.svg"
 
@@ -155,13 +151,13 @@ def test_cache_lookup_ignores_a_non_image_sibling(
     whole Remotion render, and the stale-file sweep in _download_person would
     delete it on the next --fresh-photo run.
     """
-    monkeypatch.setattr(gen_broll, "PEOPLE_DIR", tmp_path)
+    monkeypatch.setattr(broll_assets, 'PEOPLE_DIR', tmp_path)
     (tmp_path / "michaelsaylor.json").write_text('{"source_url": "..."}', encoding="utf-8")
     (tmp_path / "michaelsaylor.png").write_bytes(b"png-bytes")
 
-    assert [p.name for p in gen_broll._cached_person_photos("michaelsaylor")] == [
+    assert [p.name for p in broll_assets._cached_person_photos("michaelsaylor")] == [
         "michaelsaylor.png"]
-    assert gen_broll._cached_person_photo("michaelsaylor").suffix == ".png"
+    assert broll_assets._cached_person_photo("michaelsaylor").suffix == ".png"
 
 
 # --------------------------------------------------------------------------- #
@@ -172,12 +168,12 @@ def test_a_truncated_response_returns_none_instead_of_raising(
 ) -> None:
     """http.client.IncompleteRead is not an OSError, so it escaped the handler
     and crashed the caller mid-download."""
-    monkeypatch.setattr(gen_broll, "_CACHE_DIR", tmp_path)
-    monkeypatch.setattr(gen_broll, "_THROTTLE_SECONDS", 0.0)
+    monkeypatch.setattr(broll_assets, '_CACHE_DIR', tmp_path)
+    monkeypatch.setattr(broll_assets, '_THROTTLE_SECONDS', 0.0)
     monkeypatch.delenv("SHORTSMITH_BROLL_OFFLINE", raising=False)
     monkeypatch.delenv("SHORTSMITH_BROLL_NOCACHE", raising=False)
 
     err = http.client.IncompleteRead(partial=b"abc", expected=900)
     with patch("urllib.request.urlopen", side_effect=err) as mock_open:
-        assert gen_broll._http_get("https://x.test/asset.svg", max_retries=3) is None
+        assert broll_assets._http_get("https://x.test/asset.svg", max_retries=3) is None
     assert mock_open.call_count == 1

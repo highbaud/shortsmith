@@ -112,10 +112,10 @@ Plus regex matches for `$<n>`, `<n>K`, `<n>M`, `<n>B`, `<n>%` — covers most ci
 
 ```bash
 # Apply to one project
-uv run python scripts/add_sfx.py path/to/auto-shorts/<source>/short-NN-<hook>/
+uv run shortsmith-add-sfx path/to/auto-shorts/<source>/short-NN-<hook>/
 
 # Apply to everything (idempotent — skips up-to-date shorts)
-uv run python scripts/finalize.py
+uv run shortsmith-finalize
 ```
 
 ## Tests

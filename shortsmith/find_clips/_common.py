@@ -8,12 +8,19 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from slugify import slugify
 
 from ..config import REPO_ROOT
+from ..model_response import parse_json_array
+from ..records import ClipCallout, ClipSpec, TranscriptWord
+
+parse_json_response = parse_json_array
 
 log = logging.getLogger(__name__)
 
@@ -115,7 +122,7 @@ def performance_block(limit: int = 12) -> str:
     return "\n".join(parts)
 
 
-def format_transcript(words: list[dict]) -> str:
+def format_transcript(words: Sequence[TranscriptWord]) -> str:
     """Build a readable transcript with [t=NNs] markers every 10 seconds."""
     if not words:
         return ""
@@ -141,7 +148,7 @@ def format_transcript(words: list[dict]) -> str:
     return "\n".join(parts).strip()
 
 
-def transcript_with_context(words: list[dict]) -> str:
+def transcript_with_context(words: Sequence[TranscriptWord]) -> str:
     """The transcript plus every steer block, in the order the backends send.
 
     Both backends feed the model the same thing; only the transport differs, so
@@ -150,53 +157,43 @@ def transcript_with_context(words: list[dict]) -> str:
     return format_transcript(words) + covered_topics_block() + performance_block()
 
 
-def parse_json_response(raw: str) -> list[dict]:
-    """Extract a JSON array from a model response — tolerant of stray prose / fences."""
-    raw = raw.strip()
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        raw = "\n".join(lines).strip()
-
-    start = raw.find("[")
-    end = raw.rfind("]")
-    if start == -1 or end == -1:
-        raise ValueError(f"No JSON array found in model response:\n{raw[:500]}")
-    return json.loads(raw[start : end + 1])
-
-
 _VALID_CALLOUT_STYLES = {"caption", "punch", "bigstat", "hero"}
 
 
-def _normalize_callouts(raw: list) -> list[dict]:
-    out: list[dict] = []
-    for c in raw or []:
+def _normalize_callouts(raw: object) -> list[ClipCallout]:
+    if not isinstance(raw, list):
+        log.warning("Ignoring callouts: expected a list")
+        return []
+    out: list[ClipCallout] = []
+    for c in raw:
+        if not isinstance(c, dict):
+            log.warning("Ignoring callout: expected an object")
+            continue
         try:
+            start = float(c["local_start"])
+            duration = float(c.get("duration", 1.6))
+            if not math.isfinite(start) or not math.isfinite(duration):
+                raise ValueError("callout timing must be finite")
             style = str(c.get("style", "caption")).strip().lower()
             if style not in _VALID_CALLOUT_STYLES:
                 style = "caption"
             out.append({
-                "local_start": float(c["local_start"]),
-                "duration": float(c.get("duration", 1.6)),
+                "local_start": start,
+                "duration": duration,
                 "text": str(c["text"]).strip(),
-                # style + subline are what make bigstat/punch/hero render as
-                # intended. Dropping them (the old behaviour) silently collapsed
-                # every API-picked callout into a plain lower-third caption.
                 "style": style,
                 "subline": str(c.get("subline", "")).strip(),
                 "accent": list(c.get("accent") or []),
                 "eyebrow": str(c.get("eyebrow", "")).strip(),
                 "color": str(c.get("color", "gold")).strip().lower(),
             })
-        except (KeyError, ValueError, TypeError):
+        except (KeyError, ValueError, TypeError) as exc:
+            log.warning("Ignoring malformed callout: %s", exc)
             continue
     return out
 
 
-def _as_rank(value: object, fallback: int) -> int:
+def _as_rank(value: Any, fallback: int) -> int:
     """A model-supplied rank, coerced to an int.
 
     Rank only breaks ties in the sort below and is reassigned straight after it,
@@ -205,17 +202,20 @@ def _as_rank(value: object, fallback: int) -> int:
     try, which lost every clip in the batch rather than the one bad field.
     """
     try:
-        return int(value)  # type: ignore[arg-type]
+        return int(value)
     except (TypeError, ValueError):
         return fallback
 
 
-def normalize_clips(clips: list[dict], words: list[dict]) -> list[dict]:
+def normalize_clips(clips: list[object], words: list[TranscriptWord]) -> list[ClipSpec]:
     """Validate, deduplicate, normalize structure. Drop invalid clips."""
     max_t = float(words[-1]["end"]) if words else 0.0
 
-    out = []
+    out: list[ClipSpec] = []
     for i, c in enumerate(clips):
+        if not isinstance(c, dict):
+            log.warning("Dropping clip %d: not a JSON object (%r)", i, c)
+            continue
         try:
             start = float(c["start"])
             end = float(c["end"])
@@ -264,6 +264,6 @@ def normalize_clips(clips: list[dict], words: list[dict]) -> list[dict]:
             continue
 
     out.sort(key=lambda c: (-c["viral_score"], c["rank"]))
-    for i, c in enumerate(out):
-        c["rank"] = i + 1
+    for i, clip in enumerate(out):
+        clip["rank"] = i + 1
     return out

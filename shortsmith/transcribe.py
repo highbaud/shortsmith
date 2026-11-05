@@ -9,12 +9,27 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import names, word_pauses
+from ._files import atomic_write
 from .config import Config
+from .records import TranscriptWord, require_words
+
+if TYPE_CHECKING:
+    from faster_whisper.transcribe import Segment as WhisperSegment
 
 log = logging.getLogger(__name__)
+
+
+def segments_to_words(segments: Iterable[WhisperSegment]) -> list[TranscriptWord]:
+    """Use the same word text and timestamp precision for every Whisper producer."""
+    return [
+        {"text": word.word.strip(), "start": round(word.start, 3), "end": round(word.end, 3)}
+        for segment in segments for word in segment.words or []
+    ]
 
 
 def transcribe(
@@ -23,12 +38,13 @@ def transcribe(
     cfg: Config,
     *,
     reuse_existing: bool = True,
-) -> list[dict]:
+) -> list[TranscriptWord]:
     """Transcribe a video to a flat list of word entries.
 
     If `reuse_existing` and a sibling `transcript-<stem>.json` exists in the
     same directory as the source video, reuse it instead of running Whisper.
     """
+    words: list[TranscriptWord]
     if reuse_existing:
         # Convention 1: transcript-<slug>.json next to source video
         # Look for any transcript-*.json that matches a slug substring of the video name
@@ -72,16 +88,7 @@ def transcribe(
             vad_parameters={"min_silence_duration_ms": 250},
         )
 
-        words: list[dict] = []
-        for seg in segments:
-            if not seg.words:
-                continue
-            for w in seg.words:
-                words.append({
-                    "text": w.word.strip(),
-                    "start": round(w.start, 3),
-                    "end": round(w.end, 3),
-                })
+        words = segments_to_words(segments)
     except Exception as e:  # noqa: BLE001
         raise RuntimeError(_whisper_error_hint(e, cfg)) from e
 
@@ -117,7 +124,7 @@ def _whisper_error_hint(e: Exception, cfg: Config) -> str:
     return f"Whisper transcription failed: {e}"
 
 
-def _repair_pauses(media_path: Path, words: list[dict]) -> list[dict]:
+def _repair_pauses(media_path: Path, words: list[TranscriptWord]) -> list[TranscriptWord]:
     """Trim each word off the measured pauses Whisper stretched it across."""
     measured = word_pauses.measure_levels(media_path)
     if measured is None:
@@ -128,10 +135,10 @@ def _repair_pauses(media_path: Path, words: list[dict]) -> list[dict]:
     return fixed
 
 
-def _write_words(out_path: Path, words: list[dict]) -> None:
+def _write_words(out_path: Path, words: list[TranscriptWord]) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(words, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(out_path, json.dumps(words, indent=2, ensure_ascii=False))
 
 
-def load_words(path: Path) -> list[dict]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+def load_words(path: Path) -> list[TranscriptWord]:
+    return require_words(json.loads(Path(path).read_text(encoding="utf-8")), path)

@@ -9,15 +9,16 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import batch_pipeline  # noqa: E402
-import finalize  # noqa: E402
-import gen_broll  # noqa: E402
-import project_selection  # noqa: E402
-import render_stamp  # noqa: E402
-import reprocess_all  # noqa: E402
-
-from shortsmith.config import Config  # noqa: E402
+from scripts import (
+    batch_pipeline,
+    redo_existing,
+    redo_outdated,
+    render_all,
+    reprocess_all,
+)
+from shortsmith.config import Config
+from shortsmith.rendering import broll_assets, finalize, project_selection, render_stamp
+from shortsmith.rendering.hyperframes import FONT_MARKER
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ def _picks(library: dict, clips: list[dict], *, sidecar: list[dict] | None = Non
 
 
 def _probe(command: list[str], **kwargs) -> subprocess.CompletedProcess:
-    assert command[0] == "ffprobe"
+    assert Path(command[0]).stem.lower() == "ffprobe"
     if "format=duration" in command:
         return subprocess.CompletedProcess(command, 0, stdout="10.0\n")
     return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"streams": [
@@ -71,7 +72,7 @@ def test_canonical_picks_override_stale_sidecar_and_old_folders(library: dict) -
     _picks(library, [{"rank": 1, "slug": "current"}],
            sidecar=[{"rank": 1, "slug": "old"}, {"rank": 2, "slug": "held"}])
     assert list(finalize.scoped_projects(None)) == [(library["source"], active)]
-    assert finalize.find_render("source", 1)[0] == active
+    assert finalize.find_current_finalization_render("source", 1)[0] == active
 
 
 def test_legacy_projects_still_work_without_pick_files(library: dict) -> None:
@@ -180,9 +181,9 @@ def test_failed_sound_mix_holds_previous_export_and_stops(
     exported.write_bytes(b"old export")
 
     def failed_mix(command: list[str], **kwargs) -> subprocess.CompletedProcess:
-        if command[0] == "ffprobe":
+        if Path(command[0]).stem.lower() == "ffprobe":
             return _probe(command, **kwargs)
-        assert command[0] == "ffmpeg"
+        assert Path(command[0]).stem.lower() == "ffmpeg"
         if kwargs.get("check"):
             raise subprocess.CalledProcessError(1, command, stderr="copy failed")
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="mix failed")
@@ -231,7 +232,7 @@ def test_bad_qa_holds_export_and_cli_returns_failure(
     exported.write_bytes(b"old export")
 
     def bad_probe(command: list[str], **kwargs) -> subprocess.CompletedProcess:
-        assert command[0] == "ffprobe"
+        assert Path(command[0]).stem.lower() == "ffprobe"
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"streams": streams}))
 
     monkeypatch.setattr(subprocess, "run", bad_probe)
@@ -241,18 +242,25 @@ def test_bad_qa_holds_export_and_cli_returns_failure(
     assert next((library["renders"] / "_held").rglob("*.mp4")).read_bytes() == b"old export"
 
 
-@pytest.mark.parametrize("module", [batch_pipeline, reprocess_all])
+@pytest.mark.parametrize("module", [batch_pipeline, reprocess_all, redo_existing, redo_outdated, render_all])
 def test_batch_renderers_ignore_old_and_held_projects(
     library: dict, monkeypatch: pytest.MonkeyPatch, module,
 ) -> None:
     active = _project(library, "short-01-current")
+    (active / "index.html").write_text(f"<html>{FONT_MARKER}</html>", encoding="utf-8")
     _project(library, "short-01-old")
     _project(library, "short-02-held")
     _picks(library, [{"rank": 1, "slug": "current"}])
+    if module in (redo_existing, redo_outdated):
+        manifests = library["wd"] / "cut_manifests.json"
+        manifests.write_text('[{"rank":1}]', encoding="utf-8")
+        if module is redo_outdated:
+            os.utime(manifests, (redo_outdated.FIX_CUTOFF_EPOCH - 1,) * 2)
     videos = library["tmp"] / "videos"
     videos.mkdir()
     (videos / "source.mp4").write_bytes(b"source")
-    monkeypatch.setattr(module, "VIDEO_DIR", videos)
+    if module is not render_all:
+        monkeypatch.setattr(module, "VIDEO_DIR", videos)
     monkeypatch.setattr(module, "WORK_ROOT", library["work"])
     monkeypatch.setattr(module, "AUTO_SHORTS_ROOT", library["auto"])
     monkeypatch.setattr(module, "KIT_ROOT", library["tmp"] / "kit")
@@ -261,14 +269,17 @@ def test_batch_renderers_ignore_old_and_held_projects(
 
     def run(command, **kwargs) -> subprocess.CompletedProcess:
         calls.append(command)
+        if "render" in command:
+            output = Path(kwargs["cwd"]) / command[-1] / "renders" / "final.mp4"
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"render")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", run)
     assert module.main() == 0
-    renders = [call for call in calls if isinstance(call, str)]
+    renders = [call for call in calls if "render" in call]
     assert len(renders) == 1
-    assert active.name in renders[0]
-    assert "short-01-old" not in renders[0] and "short-02-held" not in renders[0]
+    assert Path(renders[0][-1]).name == active.name
 
 
 @pytest.mark.parametrize("manual", [True, False])
@@ -278,9 +289,9 @@ def test_same_size_person_photo_replacement_changes_cache(
     people = tmp_path / "people"
     location = people / "manual" if manual else people
     location.mkdir(parents=True)
-    monkeypatch.setattr(gen_broll, "PEOPLE_DIR", people)
-    monkeypatch.setattr(gen_broll, "MANUAL_DIR", people / "manual")
-    monkeypatch.setattr(gen_broll, "PEOPLE_MANIFEST", people / "manifest.json")
+    monkeypatch.setattr(broll_assets, 'PEOPLE_DIR', people)
+    monkeypatch.setattr(broll_assets, 'MANUAL_DIR', people / "manual")
+    monkeypatch.setattr(broll_assets, 'PEOPLE_MANIFEST', people / "manifest.json")
     photo = location / "davidschwartz.jpg"
     words = [{"text": "David", "start": 0, "end": 0.4},
              {"text": "Schwartz", "start": 0.5, "end": 0.9}]

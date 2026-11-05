@@ -7,17 +7,13 @@ short used to raise something no caller was catching and end the run.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import finalize  # noqa: E402
-import render_remotion as rr  # noqa: E402
-
-from shortsmith import layouts  # noqa: E402
+from shortsmith import layouts
+from shortsmith.rendering import finalize
+from shortsmith.rendering import render_remotion as rr
 
 
 @pytest.fixture

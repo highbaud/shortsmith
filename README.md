@@ -52,7 +52,7 @@ cd shortsmith
 ./setup.sh                                  # or .\setup.ps1 on Windows
 # edit .env to add your ANTHROPIC_API_KEY (or pick --clip-engine ollama)
 uv run shortsmith run path/to/your-video.mp4
-uv run python scripts/finalize.py           # captions + b-roll + SFX + consolidate
+uv run shortsmith-finalize                  # captions + b-roll + SFX + consolidate
 ```
 
 Forgot `--recurse-submodules`? Run `git submodule update --init --recursive`.
@@ -127,11 +127,11 @@ uses the same timeline as the audio.
 
 **9. Hyperframes render** — `npx hyperframes render` produces the base mp4 with slam hook + callouts + Ken Burns on the face cam.
 
-**10. Remotion layer.** `scripts/apply_remotion.py` overlays word-level karaoke captions on top of the base render, plus AI-selected b-roll: a logo when a brand is named, a photo when a person is named. Every asset is **identity-verified against Wikidata before it can appear** (see below). Output: `final_remotion.mp4`.
+**10. Remotion layer.** `shortsmith/rendering/apply_remotion.py` overlays word-level karaoke captions on top of the base render, plus AI-selected b-roll: a logo when a brand is named, a photo when a person is named. Every asset is **identity-verified against Wikidata before it can appear** (see below). Output: `final_remotion.mp4`.
 
-**11. SFX overlay** — `scripts/add_sfx.py` mixes a curated SFX pack onto the speech. Structural triggers (hook impact at t=0, swipe-in on callouts) + semantic triggers (cash register on first money word, ding on bigstat numbers). Levels approved: peaks at -9 dBFS, sits ~10–16 dB under voice, limiter at the end. Output: `final_sfx.mp4`.
+**11. SFX overlay.** `shortsmith/rendering/add_sfx.py` mixes a curated SFX pack onto the speech. Structural triggers (hook impact at t=0, swipe-in on callouts) + semantic triggers (cash register on first money word, ding on bigstat numbers). Levels approved: peaks at -9 dBFS, sits ~10–16 dB under voice, limiter at the end. Output: `final_sfx.mp4`. Run it with `uv run shortsmith-add-sfx`; the `scripts/add_sfx.py` launcher still works.
 
-**Consolidation** — `scripts/finalize.py` runs all three render phases and copies `final_sfx.mp4` + matching `caption.txt` into `<kit>/renders/_all/<source>__<short>.{mp4,txt}` with a flat naming scheme. Idempotent — safe to re-run.
+**Consolidation.** `shortsmith/rendering/finalize.py` runs all three render phases and copies `final_sfx.mp4` + matching `caption.txt` into `<kit>/renders/_all/<source>__<short>.{mp4,txt}` with a flat naming scheme. Run it with `uv run shortsmith-finalize`; the `scripts/finalize.py` launcher still works. It is safe to re-run.
 
 Finishing selects projects from the current `work/<source>/clips.json`, then the
 scaffold's `_clips.json`. Old projects removed from those picks are held. Previous
@@ -140,7 +140,13 @@ A failed sound mix or output check stops the run with an error. `--skip-sfx`
 exports the current best video directly. Existing projects without pick metadata
 keep the legacy folder selection.
 
-A short re-renders only when something it depends on changed. `scripts/render_stamp.py` records a digest of every input beside each render (the base video, the clip spec, the words, the manual b-roll list, the photo state of every person the words name, the render code, and the style / platform / captions switches), and `apply_remotion` compares it before rendering again. A short rendered before stamps existed keeps the old rule (newer than its base render) until `--force-remotion` rebuilds it, so an unscoped finalize never rebuilds the whole library by surprise; the phase summary says how many such shorts it left alone.
+A short re-renders only when something it depends on changed. `shortsmith/rendering/render_stamp.py` records a digest of every input beside each render (the base video, the clip spec, the words, the manual b-roll list, the photo state of every person the words name, the render code, and the style / platform / captions switches), and `apply_remotion` compares it before rendering again. A short rendered before stamps existed keeps the old rule (newer than its base render) until `--force-remotion` rebuilds it, so an unscoped finalize never rebuilds the whole library by surprise; the phase summary says how many such shorts it left alone.
+
+Render implementations live in `shortsmith/rendering/`. The installed commands
+`shortsmith-finalize`, `shortsmith-add-sfx`, `shortsmith-apply-remotion`,
+`shortsmith-gen-broll`, and `shortsmith-render-remotion` are the supported entry
+points. The matching `scripts/*.py` files remain main-only launchers for older
+habits. Python callers import the library modules.
 
 ## Configuration
 
@@ -158,7 +164,7 @@ All paths and tunables override via env vars or a project-local `.env` (auto-loa
 | `SHORTSMITH_SFX_SEMANTIC` | `sparing` | SFX mode: `sparing` / `every` / `off` |
 | `SHORTSMITH_WHISPER_MODEL` | `large-v3` | `small` / `medium` / `large-v3` |
 | `SHORTSMITH_MIN_SCORE` | `7` | Reject clips below this viral score (1–10) |
-| `SHORTSMITH_HYPERFRAMES_VERSION` | `0.7.71` | Pinned Hyperframes CLI. `latest` floats off the pin |
+| `SHORTSMITH_HYPERFRAMES_VERSION` | `0.9.16` | Pinned Hyperframes CLI. `latest` floats off the pin |
 | `SHORTSMITH_WHISPER_PROMPT` | glossary from `shortsmith/names.py` | Names and terms Whisper must spell right. Set empty to send no prompt |
 
 ## Common operations
@@ -169,7 +175,7 @@ uv run python scripts/smoke_test.py
 
 # Full pipeline on a single video, all 11 phases
 uv run shortsmith run path/to/video.mp4
-uv run python scripts/finalize.py
+uv run shortsmith-finalize
 
 # Cap clips for a fast first run
 uv run shortsmith run path/to/video.mp4 --max-clips 3
@@ -203,11 +209,11 @@ uv run shortsmith run path/to/video.mp4 --cut-aware
 uv run python scripts/reprocess_all.py
 
 # Finalize (Remotion captions + SFX + consolidate) for specific sources only
-uv run python scripts/finalize.py --slug <source-slug> [--slug <source-slug> ...]
+uv run shortsmith-finalize --slug <source-slug> [--slug <source-slug> ...]
 
 # Check what every curated person / brand resolves to before rendering
-uv run python scripts/gen_broll.py --audit-people
-uv run python scripts/gen_broll.py --audit-brands
+uv run shortsmith-gen-broll --audit-people
+uv run shortsmith-gen-broll --audit-brands
 ```
 
 For batch operations across many source videos, see [`scripts/batch_pipeline.py`](scripts/batch_pipeline.py) and [`scripts/reprocess_all.py`](scripts/reprocess_all.py).
@@ -225,11 +231,11 @@ off; existing people and logo B-roll stays the same.
 
 ```bash
 # Choose sources for a single batch (replace SOURCE_SLUG with your source folder).
-uv run python scripts/finalize.py --slug SOURCE_SLUG --sources "places,images,press"
+uv run shortsmith-finalize --slug SOURCE_SLUG --sources "places,images,press"
 
 # Turn all new sources on, or turn them all off.
-uv run python scripts/finalize.py --slug SOURCE_SLUG --sources all
-uv run python scripts/finalize.py --slug SOURCE_SLUG --sources off
+uv run shortsmith-finalize --slug SOURCE_SLUG --sources all
+uv run shortsmith-finalize --slug SOURCE_SLUG --sources off
 ```
 
 Save a default with `SHORTSMITH_BROLL_SOURCES` in `.env`, or save a choice for each
@@ -348,7 +354,7 @@ and run only the finishing layer (hook card + captions + callouts + SFX):
 uv run python scripts/ingest_premade.py <slug> file1.mp4 file2.mp4 ...
 # author work/<slug>/clips.json (hook/callouts/caption per rank), then scaffold,
 # base-render, and:
-uv run python scripts/finalize.py --slug <slug>
+uv run shortsmith-finalize --slug <slug>
 ```
 
 ## B-roll assets are identity-verified
@@ -379,8 +385,8 @@ metal band genuinely labelled Kraken, and "Microsoft" to its 1980 wordmark.
 Audit what every curated name and brand resolves to, before it reaches a render:
 
 ```bash
-uv run python scripts/gen_broll.py --audit-people   # name -> QID -> chosen photo
-uv run python scripts/gen_broll.py --audit-brands   # brand -> source -> chosen mark
+uv run shortsmith-gen-broll --audit-people   # name -> QID -> chosen photo
+uv run shortsmith-gen-broll --audit-brands   # brand -> source -> chosen mark
 ```
 
 Verified photos are cached repo-wide in `assets/people/`, so a person looks identical
@@ -445,14 +451,15 @@ A curated, level-normalized pack lives at [`assets/sfx/pack/`](assets/sfx/) with
 
 ## Docs
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the 11-phase pipeline, deep-dive.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): current code structure and pipeline guide.
+- [scripts/README.md](scripts/README.md): command index, grouped by task.
 - [docs/SETUP.md](docs/SETUP.md) — install per OS, CUDA torch matrix, model downloads.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — common errors and fixes.
 - [docs/SFX.md](docs/SFX.md) — sound-effect pack format, triggers, level approval.
 - [docs/VFX.md](docs/VFX.md) — visual transitions (glare / zoom-punch / flash).
 - [docs/REMOTION.md](docs/REMOTION.md) — captions layer + b-roll engine.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — PR checklist, where to file issues.
-- [PROJECT_STATE.md](PROJECT_STATE.md) — current development state (read this first if you're picking the project back up after a break).
+- [PROJECT_STATE.md](PROJECT_STATE.md): dated campaign history and old session notes.
 
 ## License
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import runpy
 import subprocess
 import sys
 import types
@@ -12,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import source_broll as sb  # noqa: E402
+from shortsmith.rendering import broll_assets, source_capture, source_discovery
+from shortsmith.rendering import source_broll as sb
 
 PNG = b"\x89PNG\r\n\x1a\noriginal-captured-pixels"
 WORDS = [{"word": "Ripple", "start": 2.0, "end": 3.0},
@@ -28,7 +27,19 @@ def no_live_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SHORTSMITH_BROLL_SOURCES", raising=False)
     monkeypatch.delenv("SHORTSMITH_BROLL_OFFLINE", raising=False)
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError("unexpected live process")))
-    monkeypatch.setattr(sb.source_capture, "fetch_public", lambda *a: (_ for _ in ()).throw(AssertionError("unexpected live HTTP")))
+    monkeypatch.setattr(source_capture, "fetch_public", lambda *a: (_ for _ in ()).throw(AssertionError("unexpected live HTTP")))
+
+
+@pytest.fixture
+def grok_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    tools = tmp_path / "grok installation"
+    tools.mkdir()
+    grok = tools / ("grok.exe" if sys.platform == "win32" else "grok")
+    grok.write_bytes(b"mocked process boundary")
+    grok.chmod(0o755)
+    (tools / "wscript.exe").write_bytes(b"mocked process boundary")
+    monkeypatch.setenv("PATH", str(tools))
+    return grok
 
 
 def manifest(short: Path, **value: object) -> None:
@@ -55,7 +66,7 @@ def routes(monkeypatch: pytest.MonkeyPatch, values: dict[str, object]) -> list[s
                 return json.dumps(value).encode(), "application/json", url
         raise ValueError("No matching source route: " + url)
 
-    monkeypatch.setattr(sb.source_capture, "fetch_public", fetch)
+    monkeypatch.setattr(source_capture, "fetch_public", fetch)
     return calls
 
 
@@ -68,8 +79,8 @@ def capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict]]:
         dest.write_bytes(PNG)
         return dest
 
-    monkeypatch.setattr(sb.source_capture, "download_image", write)
-    monkeypatch.setattr(sb.source_capture, "capture_page", write)
+    monkeypatch.setattr(source_capture, "download_image", write)
+    monkeypatch.setattr(source_capture, "capture_page", write)
     return calls
 
 
@@ -318,7 +329,7 @@ def test_provider_failure_keeps_explicit_sources_working(tmp_path: Path, monkeyp
 def test_verified_source_takes_priority_over_a_generic_logo_at_the_same_mention(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import gen_broll
+    from shortsmith.rendering import gen_broll
 
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "words.json").write_text(json.dumps(WORDS), encoding="utf-8")
@@ -329,7 +340,7 @@ def test_verified_source_takes_priority_over_a_generic_logo_at_the_same_mention(
     capture(monkeypatch)
     cache = tmp_path / "http-cache"
     cache.mkdir()
-    monkeypatch.setattr(gen_broll, "_CACHE_DIR", cache)
+    monkeypatch.setattr(broll_assets, '_CACHE_DIR', cache)
     key = hashlib.sha1(b"https://cdn.simpleicons.org/ripple").hexdigest()
     (cache / key).write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"><title>Ripple</title></svg>')
     result = gen_broll.generate(tmp_path, heuristic=True, cap=6, dry_run=False)
@@ -434,12 +445,14 @@ def test_original_capture_failure_is_reviewed_without_a_fake_card(tmp_path: Path
     def unavailable(*args: object, **kwargs: object) -> Path:
         raise RuntimeError("Original page cannot render")
 
-    monkeypatch.setattr(sb.source_capture, "capture_page", unavailable)
+    monkeypatch.setattr(source_capture, "capture_page", unavailable)
     assert sb.generate(tmp_path, WORDS, GAPS) == []
     assert "Original page cannot render" in (tmp_path / sb.REVIEW).read_text()
 
 
-def test_grok_worker_uses_requested_low_cost_research_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_grok_worker_uses_requested_low_cost_research_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grok_runtime: Path,
+) -> None:
     source, dest = tmp_path / "input.json", tmp_path / "output.json"
     source.write_text(json.dumps({"prompt": "Search X (Twitter) for original Ripple posts"}))
     calls = []
@@ -448,27 +461,28 @@ def test_grok_worker_uses_requested_low_cost_research_flags(tmp_path: Path, monk
         calls.append(command)
         return types.SimpleNamespace(returncode=0, stdout="[]")
 
-    monkeypatch.setattr(sb.source_discovery.shutil, "which", lambda name: "grok.exe")
     monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(sys, "argv", [str(Path(sb.source_discovery.__file__)), "--grok-worker", str(source), str(dest)])
-    runpy.run_path(str(Path(sb.source_discovery.__file__)), run_name="__main__")
-    assert calls[0][:6] == ["grok.exe", "--single", "--model", "grok-build", "--reasoning-effort", "low"]
+    monkeypatch.setattr(sys, "argv", ["source_discovery", "--grok-worker", str(source), str(dest)])
+    assert source_discovery.main() is None
+    assert calls[0][:6] == [str(grok_runtime), "--single", "--model", "grok-build", "--reasoning-effort", "low"]
     assert json.loads(dest.read_text()) == {"stdout": "[]", "returncode": 0}
 
 
-def test_x_discovery_proposes_real_posts_through_hidden_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_x_discovery_proposes_real_posts_through_hidden_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, grok_runtime: Path,
+) -> None:
     prompts = []
 
     def run(command: list[str], **kwargs: object) -> object:
-        if command[0] == "wscript.exe":
+        if Path(command[0]).stem.lower() == "wscript":
+            assert command[2:6] == [sys.executable, "-m", "shortsmith.rendering.source_discovery", "--grok-worker"]
             prompts.append(json.loads(Path(command[-2]).read_text())["prompt"])
             Path(command[-1]).write_text(json.dumps({"returncode": 0, "stdout": json.dumps([tweet_item()])}))
         else:
             prompts.append(command[-1])
         return types.SimpleNamespace(returncode=0, stdout=json.dumps([tweet_item()]))
 
-    monkeypatch.setattr(sb.source_discovery.tempfile, "tempdir", str(tmp_path))
-    monkeypatch.setattr(sb.source_discovery.shutil, "which", lambda name: "grok.exe")
+    monkeypatch.setattr(source_discovery.tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(subprocess, "run", run)
     tweet_routes(monkeypatch)
     capture(monkeypatch)
@@ -574,13 +588,13 @@ def test_source_query_must_be_in_the_captured_quote_not_navigation(tmp_path: Pat
 def test_official_root_website_needs_no_trailing_slash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     manifest(tmp_path, enabled=["press"], items=[item()])
     official(monkeypatch)
-    page_fetch = sb.source_capture.fetch_public
+    page_fetch = source_capture.fetch_public
 
     def fetch(url: str) -> tuple[bytes, str, str]:
         if "wbgetentities" in url:
             return json.dumps({"entities": {"Q1": entity("Ripple", P856=[claim("https://ripple.com")])}}).encode(), "application/json", url
         return page_fetch(url)
 
-    monkeypatch.setattr(sb.source_capture, "fetch_public", fetch)
+    monkeypatch.setattr(source_capture, "fetch_public", fetch)
     capture(monkeypatch)
     assert len(sb.generate(tmp_path, WORDS, GAPS)) == 1

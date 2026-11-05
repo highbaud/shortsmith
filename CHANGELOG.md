@@ -6,6 +6,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- HyperFrames CLI pin moved from 0.7.71 to 0.9.16. The scaffold template now declares
+  a local Bebas Neue `@font-face`, tweens blur without an overshooting ease, and centers
+  `.hero` with GSAP `yPercent`. Without these, 0.9 renders a narrower font, a flickering
+  hook and a low hero caption. Projects scaffolded earlier need a new scaffold first.
 - Dependencies updated to latest (2026-11-03): anthropic 2.4, numpy 2.5 (old `<2.3` cap
   removed), OpenCV 5.0, librosa 1.0, python-slugify 9, Remotion 4.0.540, React 19,
   TypeScript 7. PyAV is capped `<19` because faster-whisper 1.2.1 breaks on PyAV 19.

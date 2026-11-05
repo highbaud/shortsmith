@@ -23,7 +23,7 @@ def media_stub(monkeypatch, duration="8.5"):
 
     def run(argv, **kwargs):
         calls.append(argv)
-        if argv[0] == "ffprobe":
+        if Path(argv[0]).stem.lower() == "ffprobe":
             return subprocess.CompletedProcess(argv, 0, stdout=duration + "\n")
         Path(argv[-1]).touch()
         return subprocess.CompletedProcess(argv, 0)
@@ -264,7 +264,7 @@ def test_default_cleaning_preserves_contentful_you_know(monkeypatch, tmp_path):
     )
     assert cleaned["story_review"]["decision"] == "pass"
     assert cleaned["duration"] == 8.5
-    assert any(call[0] == "ffprobe" for call in calls)
+    assert any(Path(call[0]).stem.lower() == "ffprobe" for call in calls)
 
 
 def test_new_speech_deletion_invalidates_approval_before_cut(monkeypatch, tmp_path):
@@ -402,7 +402,7 @@ def test_cutter_records_measured_duration_and_seam_metadata(monkeypatch, tmp_pat
     assert manifest["duration"] == 3.875
     assert manifest["segment_durations"] == [3.875, 3.875]
     assert manifest["seam_xfade_seconds"] == .08
-    assert len([call for call in calls if call[0] == "ffprobe"]) == 3
+    assert len([call for call in calls if Path(call[0]).stem.lower() == "ffprobe"]) == 3
 
 
 def test_failed_clean_cannot_copy_unreviewed_words_and_keep_a_pass(monkeypatch, tmp_path):

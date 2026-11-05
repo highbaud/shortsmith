@@ -12,22 +12,16 @@ from pathlib import Path
 
 from slugify import slugify
 
-from shortsmith.config import VIDEO_DIR, Config, make_work_dir
+from shortsmith._files import atomic_write
+from shortsmith.config import VIDEO_DIR, VIDEO_EXTENSIONS, Config, make_work_dir
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
 log = logging.getLogger("batch_transcribe")
-
-EXTENSIONS = {".mp4", ".mkv", ".webm", ".mov"}
 
 
 def find_pending() -> list[Path]:
     videos = sorted(
         p for p in VIDEO_DIR.iterdir()
-        if p.is_file() and p.suffix.lower() in EXTENSIONS
+        if p.is_file() and p.suffix.lower() in VIDEO_EXTENSIONS
     )
     pending = []
     for v in videos:
@@ -36,17 +30,22 @@ def find_pending() -> list[Path]:
         transcript = wd / "transcript.json"
         if transcript.exists():
             try:
-                # sanity check: ensure non-empty
                 data = json.loads(transcript.read_text(encoding="utf-8"))
                 if isinstance(data, list) and len(data) > 100:
                     continue
-            except Exception:
-                pass
+            except (OSError, ValueError) as exc:
+                log.warning("Cannot reuse transcript %s: %s; transcribing again", transcript, exc)
         pending.append(v)
     return pending
 
 
 def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
     if not VIDEO_DIR.is_dir():
         log.error("Video dir not found: %s. Set SHORTSMITH_VIDEO_DIR.", VIDEO_DIR)
         return 1
@@ -56,8 +55,9 @@ def main() -> int:
     if not pending:
         return 0
 
-    # Lazy import
     from faster_whisper import WhisperModel
+
+    from shortsmith.transcribe import segments_to_words
 
     log.info("Loading faster-whisper model=%s device=%s compute=%s",
              cfg.whisper_model, cfg.whisper_device, cfg.whisper_compute_type)
@@ -67,37 +67,34 @@ def main() -> int:
         compute_type=cfg.whisper_compute_type,
     )
 
+    succeeded = failed = 0
     for i, video in enumerate(pending, 1):
         log.info("[%d/%d] Transcribing %s", i, len(pending), video.name)
-        wd = make_work_dir(video)
-        transcript = wd / "transcript.json"
+        wd = None
         try:
+            wd = make_work_dir(video)
+            transcript = wd / "transcript.json"
             segments, info = model.transcribe(
                 str(video),
                 word_timestamps=True,
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 250},
             )
-            words: list[dict] = []
-            for seg in segments:
-                if not seg.words:
-                    continue
-                for w in seg.words:
-                    words.append({
-                        "text": w.word.strip(),
-                        "start": round(w.start, 3),
-                        "end": round(w.end, 3),
-                    })
-            transcript.write_text(
-                json.dumps(words, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            words = segments_to_words(segments)
+            atomic_write(transcript, json.dumps(words, indent=2, ensure_ascii=False))
+            succeeded += 1
             log.info("[%d/%d] DONE %d words -> %s", i, len(pending), len(words), transcript)
         except Exception as e:
+            failed += 1
             log.exception("[%d/%d] FAILED %s: %s", i, len(pending), video.name, e)
-            # Write a marker so we don't retry next run
-            (wd / "transcribe_failed.txt").write_text(str(e), encoding="utf-8")
+            if wd is not None:
+                try:
+                    atomic_write(wd / "transcribe_failed.txt", str(e))
+                except OSError as marker_error:
+                    log.error("Cannot record transcription failure in %s: %s", wd, marker_error)
 
-    return 0
+    log.info("Batch complete: succeeded=%d failed=%d", succeeded, failed)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

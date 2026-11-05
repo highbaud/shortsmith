@@ -24,8 +24,8 @@ that specific entity:
 
 The caller supplies the HTTP getter (`fetch`), so this module inherits
 gen_broll's on-disk cache, throttle, retry, and offline mode without importing
-it back.
-"""
+it back."""
+
 from __future__ import annotations
 
 import random
@@ -33,26 +33,16 @@ import re
 import urllib.parse
 from dataclasses import dataclass, replace
 
-import wikidata
-from wikidata import COMMONS_API, HUMAN, Fetch
-from wikidata import api_json as _api_json
-from wikidata import claim_values as _claim_values
-from wikidata import commons_file_url as file_url
-from wikidata import commons_image_info as _image_info
-from wikidata import get_entities as _get_entities
-from wikidata import labels_for as _labels_for
-from wikidata import strip_file_prefix as _strip_file_prefix
+from . import wikidata
+from .wikidata import COMMONS_API, HUMAN, Fetch
+from .wikidata import api_json as _api_json
+from .wikidata import claim_values as _claim_values
+from .wikidata import commons_file_url as file_url
+from .wikidata import commons_image_info as _image_info
+from .wikidata import get_entities as _get_entities
+from .wikidata import labels_for as _labels_for
+from .wikidata import strip_file_prefix as _strip_file_prefix
 
-# Curated QID pins. A pinned name skips entity search entirely, so an ambiguous
-# name can never resolve to a stranger no matter how the search index shifts.
-# Every entry below was verified against Wikidata via `gen_broll.py
-# --audit-people`; re-run it after editing this map.
-#
-# Pinning is not belt-and-braces. Search genuinely gets these wrong: unpinned,
-# "Michael Saylor" resolves to a substitute teacher in Kentucky (Q127446347),
-# because that item's label is an exact string match while the real one is
-# labelled "Michael J. Saylor". "Jim Rickards" resolves to nothing at all; his
-# item is "James G. Rickards".
 PERSON_QIDS: dict[str, str] = {
     # Ripple / XRP
     "Brad Garlinghouse": "Q4953945",
@@ -60,7 +50,7 @@ PERSON_QIDS: dict[str, str] = {
     "Chris Larsen": "Q19864583",
     "Jed McCaleb": "Q28449997",
     # Crypto founders / execs
-    "Michael Saylor": "Q6831501",      # labelled "Michael J. Saylor"
+    "Michael Saylor": "Q6831501",  # labelled "Michael J. Saylor"
     "Vitalik Buterin": "Q16197959",
     "Brian Armstrong": "Q64705310",
     "Changpeng Zhao": "Q52714313",
@@ -71,7 +61,7 @@ PERSON_QIDS: dict[str, str] = {
     "Cathie Wood": "Q104587868",
     "Michael Burry": "Q6828961",
     "Peter Schiff": "Q512741",
-    "Jim Rickards": "Q6134385",        # labelled "James G. Rickards"
+    "Jim Rickards": "Q6134385",  # labelled "James G. Rickards"
     # Policy / government
     "Donald Trump": "Q22686",
     "Jerome Powell": "Q6182718",
@@ -90,41 +80,76 @@ PERSON_QIDS: dict[str, str] = {
     "Patrick Bet-David": "Q16217194",
 }
 
-# Last word on which file to use, when the ranked pick is technically of the
-# right person but still a bad frame. Maps a display name to a Commons filename;
-# the file is used as-is, skipping ranking. Verify with --audit-people.
 PERSON_PHOTO_OVERRIDES: dict[str, str] = {}
 
-# Names that have no legitimate photograph. Resolving these to *anything* is a
-# mistake, so short-circuit them to "no photo" and let the caller drop the slide.
 NO_PHOTO_EXISTS = frozenset({"satoshi nakamoto"})
 
-# Files that are about a person without being a usable photo OF them.
 REJECT_WORDS = (
-    "signature", "autograph", "coat of arms", "grave", "tomb", "memorial",
-    "plaque", "statue", "bust", "sculpture", "mural", "logo", "seal", "flag",
-    "book cover", "poster", "caricature", "cartoon", "sketch", "drawing",
-    "diagram", "chart", "map", "letter", "document", "screenshot", "quote",
+    "signature",
+    "autograph",
+    "coat of arms",
+    "grave",
+    "tomb",
+    "memorial",
+    "plaque",
+    "statue",
+    "bust",
+    "sculpture",
+    "mural",
+    "logo",
+    "seal",
+    "flag",
+    "book cover",
+    "poster",
+    "caricature",
+    "cartoon",
+    "sketch",
+    "drawing",
+    "diagram",
+    "chart",
+    "map",
+    "letter",
+    "document",
+    "screenshot",
+    "quote",
 )
-# Titles that describe more than one subject. A group shot crops badly in 9:16
-# and puts the wrong face center-frame.
-GROUP_MARKERS = (" & ", " and ", " with ", " meets ", " hosts ", " vs ", " v. ",
-                 " y ", " und ", " et ", ";")
+
+GROUP_MARKERS = (
+    " & ",
+    " and ",
+    " with ",
+    " meets ",
+    " hosts ",
+    " vs ",
+    " v. ",
+    " y ",
+    " und ",
+    " et ",
+    ";",
+)
+
 PORTRAIT_WORDS = ("portrait", "headshot", "official photo", "profile picture")
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
-MIN_WIDTH = 400     # below this a full-frame 9:16 cutaway visibly softens
-GOOD_WIDTH = 600
-VARIETY_BAND = 12   # shuffle among candidates within this many points of the best
 
-# Scoring weights. Tuned so the entity's designated portrait (P18) beats a
-# same-subject action shot, and any group photo loses to both.
+MIN_WIDTH = 400  # below this a full-frame 9:16 cutaway visibly softens
+
+GOOD_WIDTH = 600
+
+VARIETY_BAND = 12  # shuffle among candidates within this many points of the best
+
 W_P18 = 20
+
 W_NAME_IN_TITLE = 12
+
 W_TITLE_STARTS_WITH_NAME = 6
+
 W_PORTRAIT_WORD = 6
+
 W_GOOD_WIDTH = 4
+
 W_GROUP_PENALTY = -30
+
 W_OTHER_PERSON_PENALTY = -30
 
 
@@ -137,7 +162,7 @@ class Identity:
     description: str = ""
     occupations: tuple[str, ...] = ()
     employers: tuple[str, ...] = ()
-    image: str | None = None            # P18 Commons filename
+    image: str | None = None  # P18 Commons filename
     commons_category: str | None = None  # P373
     score: int = 0
     pinned: bool = False
@@ -158,19 +183,15 @@ class Identity:
 class Candidate:
     """A Commons file bound to a resolved identity."""
 
-    title: str          # filename, no "File:" prefix
-    origin: str         # "P18" | "depicts" | "category"
+    title: str  # filename, no "File:" prefix
+    origin: str  # "P18" | "depicts" | "category"
     width: int = 0
     url: str = ""
     score: int = 0
     reasons: tuple[str, ...] = ()
 
 
-# --------------------------------------------------------------------------- #
-# Wikidata
-# --------------------------------------------------------------------------- #
-def _build_identity(fetch: Fetch, qid: str, entity: dict, *, score: int,
-                    pinned: bool) -> Identity:
+def _build_identity(fetch: Fetch, qid: str, entity: dict, *, score: int, pinned: bool) -> Identity:
     p18 = _claim_values(entity, "P18")
     p373 = _claim_values(entity, "P373")
     return Identity(
@@ -178,8 +199,9 @@ def _build_identity(fetch: Fetch, qid: str, entity: dict, *, score: int,
         label=wikidata.label_of(entity) or qid,
         description=wikidata.description_of(entity),
         occupations=_labels_for(fetch, _claim_values(entity, "P106")[:4]),
-        employers=_labels_for(fetch, _claim_values(entity, "P108")[:3]
-                              + _claim_values(entity, "P169")[:2]),
+        employers=_labels_for(
+            fetch, _claim_values(entity, "P108")[:3] + _claim_values(entity, "P169")[:2]
+        ),
         image=p18[0] if p18 else None,
         commons_category=p373[0] if p373 else None,
         score=score,
@@ -194,23 +216,35 @@ def _hint_tokens(role_hint: str) -> list[str]:
     Titles (CEO/CTO/founder) are dropped: almost every candidate is one, so they
     carry no disambiguating signal. Organisations and domains do.
     """
-    generic = {"ceo", "cto", "cfo", "coo", "chair", "chairman", "chairwoman",
-               "founder", "cofounder", "co-founder", "former", "president",
-               "author", "the", "and", "of", "at"}
+    generic = {
+        "ceo",
+        "cto",
+        "cfo",
+        "coo",
+        "chair",
+        "chairman",
+        "chairwoman",
+        "founder",
+        "cofounder",
+        "co-founder",
+        "former",
+        "president",
+        "author",
+        "the",
+        "and",
+        "of",
+        "at",
+    }
     tokens = re.split(r"[^A-Za-z0-9']+", role_hint.lower())
     return [t for t in tokens if len(t) > 2 and t not in generic]
 
 
-# Notability from Wikimedia coverage: +1 per NOTABILITY_DIVISOR sitelinks, capped
-# at +10. An unhinted human needs MIN_SITELINKS to resolve at all; the exact
-# label match that once picked a substitute teacher over Michael Saylor is now
-# worth a single point.
 NOTABILITY_DIVISOR = 5
+
 MIN_SITELINKS = 5
 
 
-def _score_entity(entity: dict, name: str, hint_tokens: list[str],
-                  blob: str) -> tuple[int, bool]:
+def _score_entity(entity: dict, name: str, hint_tokens: list[str], blob: str) -> tuple[int, bool]:
     """(score, eligible). Eligible means the role hint matched or the entity is
     notable enough (MIN_SITELINKS) to be the person a video would mention."""
     hint_hits = sum(1 for token in hint_tokens if token in blob)
@@ -252,8 +286,7 @@ def resolve_identity(fetch: Fetch, name: str, role_hint: str = "") -> Identity |
         if not entity or HUMAN not in _claim_values(entity, "P31"):
             continue
         identity = _build_identity(fetch, qid, entity, score=0, pinned=False)
-        blob = " ".join((identity.description, *identity.occupations,
-                         *identity.employers)).lower()
+        blob = " ".join((identity.description, *identity.occupations, *identity.employers)).lower()
         score, eligible = _score_entity(entity, name, hint_tokens, blob)
         if not eligible:
             continue
@@ -263,14 +296,13 @@ def resolve_identity(fetch: Fetch, name: str, role_hint: str = "") -> Identity |
     return best
 
 
-# --------------------------------------------------------------------------- #
-# Commons: files bound to the resolved entity
-# --------------------------------------------------------------------------- #
 def _depicts_titles(fetch: Fetch, qid: str, limit: int = 12) -> list[str]:
     """Files whose Commons structured data asserts P180 (depicts) = this entity."""
-    url = (f"{COMMONS_API}?action=query&list=search"
-           f"&srsearch=haswbstatement%3AP180%3D{qid}&srnamespace=6&srlimit={limit}"
-           "&format=json")
+    url = (
+        f"{COMMONS_API}?action=query&list=search"
+        f"&srsearch=haswbstatement%3AP180%3D{qid}&srnamespace=6&srlimit={limit}"
+        "&format=json"
+    )
     results = (_api_json(fetch, url).get("query") or {}).get("search") or []
     return [_strip_file_prefix(r["title"]) for r in results if r.get("title")]
 
@@ -280,15 +312,14 @@ def _category_titles(fetch: Fetch, category: str | None, limit: int = 12) -> lis
     if not category:
         return []
     title = urllib.parse.quote("Category:" + category.replace(" ", "_"))
-    url = (f"{COMMONS_API}?action=query&list=categorymembers&cmtitle={title}"
-           f"&cmtype=file&cmlimit={limit}&format=json")
+    url = (
+        f"{COMMONS_API}?action=query&list=categorymembers&cmtitle={title}"
+        f"&cmtype=file&cmlimit={limit}&format=json"
+    )
     members = (_api_json(fetch, url).get("query") or {}).get("categorymembers") or []
     return [_strip_file_prefix(m["title"]) for m in members if m.get("title")]
 
 
-# --------------------------------------------------------------------------- #
-# Ranking
-# --------------------------------------------------------------------------- #
 def _name_tokens(name: str) -> list[str]:
     """`name` split into lower-case word tokens, in order.
 
@@ -309,8 +340,9 @@ def _other_person_surnames(name: str) -> set[str]:
     return others
 
 
-def score_candidate(title: str, origin: str, width: int, name: str,
-                    other_surnames: set[str] | None = None) -> tuple[int, tuple[str, ...]]:
+def score_candidate(
+    title: str, origin: str, width: int, name: str, other_surnames: set[str] | None = None
+) -> tuple[int, tuple[str, ...]]:
     """Score one file. A score of None-equivalent (-999) means reject outright."""
     lower = title.lower()
     reasons: list[str] = []
@@ -349,8 +381,7 @@ def score_candidate(title: str, origin: str, width: int, name: str,
     if "cropped" not in stem and any(marker in padded for marker in GROUP_MARKERS):
         score += W_GROUP_PENALTY
         reasons.append("looks like a group photo")
-    for surname in (other_surnames if other_surnames is not None
-                    else _other_person_surnames(name)):
+    for surname in other_surnames if other_surnames is not None else _other_person_surnames(name):
         if re.search(rf"\b{re.escape(surname)}\b", stem):
             score += W_OTHER_PERSON_PENALTY
             reasons.append(f"another known person in frame ({surname})")
@@ -387,15 +418,23 @@ def rank_candidates(fetch: Fetch, identity: Identity, name: str) -> list[Candida
         score, reasons = score_candidate(title, origin, width, name, other_surnames)
         if score <= -999:
             continue
-        out.append(Candidate(title=title, origin=origin, width=width,
-                             url=url or file_url(title), score=score,
-                             reasons=reasons))
+        out.append(
+            Candidate(
+                title=title,
+                origin=origin,
+                width=width,
+                url=url or file_url(title),
+                score=score,
+                reasons=reasons,
+            )
+        )
     out.sort(key=lambda c: (-c.score, c.title))
     return out
 
 
-def shuffle_within_band(candidates: list[Candidate], seed: int | None = None,
-                        band: int = VARIETY_BAND) -> list[Candidate]:
+def shuffle_within_band(
+    candidates: list[Candidate], seed: int | None = None, band: int = VARIETY_BAND
+) -> list[Candidate]:
     """Vary the pick among near-equal candidates without ever demoting the best.
 
     Files within `band` points of the top score are interchangeable in quality,
@@ -412,9 +451,9 @@ def shuffle_within_band(candidates: list[Candidate], seed: int | None = None,
     return top + rest
 
 
-def resolve_photo_candidates(fetch: Fetch, name: str, role_hint: str = "",
-                             seed: int | None = None
-                             ) -> tuple[Identity | None, list[Candidate]]:
+def resolve_photo_candidates(
+    fetch: Fetch, name: str, role_hint: str = "", seed: int | None = None
+) -> tuple[Identity | None, list[Candidate]]:
     """Full pipeline: name (+role) -> identity -> ranked, shuffled candidates."""
     identity = resolve_identity(fetch, name, role_hint)
     if not identity:
@@ -423,8 +462,18 @@ def resolve_photo_candidates(fetch: Fetch, name: str, role_hint: str = "",
     override = PERSON_PHOTO_OVERRIDES.get(name.strip())
     if override:
         info = _image_info(fetch, [override]).get(override, ("", 0))
-        return (identity, [Candidate(title=override, origin="override",
-                                     width=info[1], url=info[0] or file_url(override),
-                                     score=999, reasons=("manual override",))])
+        return (
+            identity,
+            [
+                Candidate(
+                    title=override,
+                    origin="override",
+                    width=info[1],
+                    url=info[0] or file_url(override),
+                    score=999,
+                    reasons=("manual override",),
+                )
+            ],
+        )
 
     return (identity, shuffle_within_band(rank_candidates(fetch, identity, name), seed))

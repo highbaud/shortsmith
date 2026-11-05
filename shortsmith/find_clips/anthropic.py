@@ -7,8 +7,11 @@ transcript length.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 from ..config import Config
+from ..model_response import text_from_blocks
+from ..records import TranscriptWord
 from ._common import (
     load_system_prompt,
     parse_json_response,
@@ -18,7 +21,7 @@ from ._common import (
 log = logging.getLogger(__name__)
 
 
-def call(words: list[dict], cfg: Config) -> list[dict]:
+def select_clips(words: Sequence[TranscriptWord], cfg: Config) -> list[object]:
     """Send the transcript to Claude and return parsed JSON clip list."""
     import anthropic
 
@@ -33,7 +36,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
     system_prompt = load_system_prompt()
 
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
-    max_tokens = getattr(cfg, "clip_max_tokens", 32000)
+    max_tokens = cfg.clip_max_tokens
     log.info("Calling Claude (%s) to rank clips (max_tokens=%d)...",
              cfg.claude_model, max_tokens)
     resp = client.messages.create(
@@ -52,11 +55,11 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
             max_tokens,
         )
 
-    raw = resp.content[0].text  # type: ignore[attr-defined]
+    raw = text_from_blocks(resp.content)
     return parse_json_response(raw)
 
 
-def review(system_prompt: str, user_input: str, cfg: Config) -> list[dict]:
+def review_story_plans(system_prompt: str, user_input: str, cfg: Config) -> list[object]:
     """Run a separate story check and require a complete review response."""
     import anthropic
 
@@ -83,14 +86,8 @@ def review(system_prompt: str, user_input: str, cfg: Config) -> list[dict]:
         )
         raise RuntimeError(f"Story check: Claude response did not finish ({stop_reason}). {advice}")
 
-    content = getattr(resp, "content", None)
-    if not isinstance(content, list):
-        raise RuntimeError("Story check: Claude returned invalid JSON. Retry the story check.")
-    raw = "\n".join(
-        block.text for block in content
-        if getattr(block, "type", None) == "text" and isinstance(getattr(block, "text", None), str)
-    )
     try:
+        raw = text_from_blocks(getattr(resp, "content", None))
         reviews = parse_json_response(raw)
     except (TypeError, ValueError) as exc:
         raise RuntimeError("Story check: Claude returned invalid JSON. Retry the story check.") from exc

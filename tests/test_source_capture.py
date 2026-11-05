@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import socket
 import struct
 import subprocess
-import sys
 import time
 import zlib
 from pathlib import Path
@@ -15,8 +15,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import source_capture  # noqa: E402
+from shortsmith.rendering import source_capture
+
+
+@pytest.fixture
+def node_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    tools = tmp_path / "node installation"
+    tools.mkdir()
+    node = tools / ("node.exe" if os.name == "nt" else "node")
+    node.write_bytes(b"mocked process boundary")
+    node.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tools))
+    return node
 
 
 def _dns(address: str = "93.184.216.34") -> list[tuple]:
@@ -147,6 +157,15 @@ def test_fetch_checks_all_dns_answers() -> None:
     connection.assert_not_called()
 
 
+def test_fetch_rejects_nonstring_dns_answers_before_connecting() -> None:
+    answers = _dns() + [(socket.AF_INET, socket.SOCK_STREAM, 0, "", (0x7F000001, 443))]
+    with patch("socket.getaddrinfo", return_value=answers), \
+            patch("http.client.HTTPSConnection") as connection:
+        with pytest.raises(ValueError, match="invalid IP address"):
+            source_capture.fetch_public("https://example.org/")
+    connection.assert_not_called()
+
+
 def test_fetch_pins_checked_dns_and_preserves_tls_hostname() -> None:
     with patch("socket.getaddrinfo", return_value=_dns()), \
             patch("http.client.HTTPSConnection") as constructor, \
@@ -225,8 +244,9 @@ def test_offline_blocks_all_capture_entrypoints(tmp_path: Path, monkeypatch: pyt
     run.assert_not_called()
 
 
-def test_capture_passes_json_input_to_hidden_node_process(tmp_path: Path) -> None:
+def test_capture_passes_json_input_to_hidden_node_process(tmp_path: Path, node_runtime: Path) -> None:
     def node_result(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+        assert command[0] == str(node_runtime)
         payload = json.loads(kwargs["input"])
         Path(payload["dest"]).write_bytes(_png())
         assert payload["quote"] == "Exact original quote"
@@ -235,7 +255,7 @@ def test_capture_passes_json_input_to_hidden_node_process(tmp_path: Path) -> Non
         assert "shell" not in kwargs
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    with patch("shutil.which", return_value="node"), patch("subprocess.run", side_effect=node_result):
+    with patch("subprocess.run", side_effect=node_result):
         result = source_capture.capture_page("https://example.org/", tmp_path / "original.png",
                                              selector="article", quote="Exact original quote")
     assert result.read_bytes() == _png()
@@ -245,9 +265,9 @@ def test_capture_passes_json_input_to_hidden_node_process(tmp_path: Path) -> Non
     subprocess.CompletedProcess(["node"], 1, "", "Original post requires login"),
     subprocess.TimeoutExpired(["node"], 80),
 ])
-def test_capture_reports_failure_without_output(tmp_path: Path, failure: object) -> None:
+def test_capture_reports_failure_without_output(tmp_path: Path, failure: object, node_runtime: Path) -> None:
     options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
-    with patch("shutil.which", return_value="node"), patch("subprocess.run", **options):
+    with patch("subprocess.run", **options):
         with pytest.raises(RuntimeError, match="capture failed"):
             source_capture.capture_page("https://example.org/", tmp_path / "original.png")
     assert not (tmp_path / "original.png").exists()

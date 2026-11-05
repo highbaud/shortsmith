@@ -1,8 +1,8 @@
 """Transcript source discovery. Results are proposals, never verification.
 
 Windows Grok runs inside the workspace's hidden launcher. A JSON result file
-preserves its output and exit code because wscript has no standard output.
-"""
+preserves its output and exit code because wscript has no standard output."""
+
 from __future__ import annotations
 
 import json
@@ -11,11 +11,16 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from shortsmith._files import atomic_write
+from shortsmith._process import resolve_executable
+from shortsmith.records import TranscriptWord
 
-def _array(raw: str) -> list[dict]:
+
+def _parse_discovery_items(raw: str) -> list[dict]:
     start, end = raw.find("["), raw.rfind("]")
     if start < 0 or end < start:
         raise ValueError("Discovery did not return a JSON array")
@@ -30,16 +35,19 @@ def _search_urls(value: Any) -> set[str]:
         return set().union(*(_search_urls(item) for item in value)) if value else set()
     if not isinstance(value, dict):
         return set()
-    urls = {value["url"]} if value.get("type") in {
-        "web_search_result", "web_search_result_location"
-    } and isinstance(value.get("url"), str) else set()
+    urls = (
+        {value["url"]}
+        if value.get("type") in {"web_search_result", "web_search_result_location"}
+        and isinstance(value.get("url"), str)
+        else set()
+    )
     for child in value.values():
         if isinstance(child, (dict, list)):
             urls.update(_search_urls(child))
     return urls
 
 
-def discover_web(words: list[dict], kinds: frozenset[str]) -> list[dict]:
+def discover_web(words: Sequence[TranscriptWord], kinds: frozenset[str]) -> list[dict]:
     """Use configured Anthropic web search; require grounded page URLs."""
     import anthropic
 
@@ -67,27 +75,43 @@ def discover_web(words: list[dict], kinds: frozenset[str]) -> list[dict]:
         messages=[{"role": "user", "content": json.dumps(words, ensure_ascii=True)}],
     )
     payload = response.model_dump()
-    raw = "\n".join(block.get("text", "") for block in payload.get("content", [])
-                    if block.get("type") == "text")
+    raw = "\n".join(
+        block.get("text", "") for block in payload.get("content", []) if block.get("type") == "text"
+    )
     allowed = _search_urls(payload)
-    items = [item for item in _array(raw) if item.get("kind") in kinds]
-    return [item if item.get("kind") == "places" or item.get("url") in allowed
-            else {**item, "_discovery_error": "Page URL has no web-search citation evidence"}
-            for item in items]
+    items = [item for item in _parse_discovery_items(raw) if item.get("kind") in kinds]
+    return [
+        item
+        if item.get("kind") == "places" or item.get("url") in allowed
+        else {**item, "_discovery_error": "Page URL has no web-search citation evidence"}
+        for item in items
+    ]
 
 
 def _grok_process(prompt: str) -> subprocess.CompletedProcess[str]:
-    command = shutil.which("grok")
-    if not command:
+    try:
+        command = resolve_executable("grok")
+    except FileNotFoundError as error:
+        raise RuntimeError("Grok CLI is unavailable") from error
+    except ValueError as error:
+        raise RuntimeError(
+            "Grok needs a native executable for safe transcript arguments"
+        ) from error
+    resolved_command = shutil.which(command) if os.name != "nt" else command
+    if not resolved_command:
         raise RuntimeError("Grok CLI is unavailable")
-    if os.name == "nt" and Path(command).suffix.lower() in {".bat", ".cmd", ".ps1"}:
+    if os.name == "nt" and Path(resolved_command).suffix.lower() in {".bat", ".cmd", ".ps1"}:
         raise RuntimeError("Grok needs a native executable for safe transcript arguments")
     options: dict[str, Any] = {}
     if os.name == "nt":
         options["creationflags"] = subprocess.CREATE_NO_WINDOW
     return subprocess.run(
-        [command, "--single", "--model", "grok-build", "--reasoning-effort", "low", prompt],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        [resolved_command, "--single", "--model", "grok-build", "--reasoning-effort", "low", prompt],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
         **options,
     )
 
@@ -104,13 +128,23 @@ def _grok_hidden(prompt: str) -> str:
     with tempfile.TemporaryDirectory(prefix="shortsmith-grok-") as directory:
         source, dest = Path(directory) / "input.json", Path(directory) / "output.json"
         source.write_text(json.dumps({"prompt": prompt}, ensure_ascii=True), encoding="utf-8")
-        result = subprocess.run(
-            ["wscript.exe", str(launcher), sys.executable, str(Path(__file__).resolve()),
-             "--grok-worker", str(source), str(dest)],
-            capture_output=True, check=False, creationflags=subprocess.CREATE_NO_WINDOW,
+        launch = subprocess.run(
+            [
+                resolve_executable("wscript.exe"),
+                str(launcher),
+                sys.executable,
+                "-m",
+                "shortsmith.rendering.source_discovery",
+                "--grok-worker",
+                str(source),
+                str(dest),
+            ],
+            capture_output=True,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        if result.returncode or not dest.is_file():
-            raise RuntimeError(f"Hidden Grok discovery failed (exit {result.returncode})")
+        if launch.returncode or not dest.is_file():
+            raise RuntimeError(f"Hidden Grok discovery failed (exit {launch.returncode})")
         payload = json.loads(dest.read_text(encoding="utf-8"))
         if payload.get("returncode"):
             raise RuntimeError(f"Grok discovery failed (exit {payload['returncode']})")
@@ -119,7 +153,7 @@ def _grok_hidden(prompt: str) -> str:
         return payload["stdout"]
 
 
-def discover_tweets(words: list[dict]) -> list[dict]:
+def discover_tweets(words: Sequence[TranscriptWord]) -> list[dict]:
     """Use the user's Grok research route for public X posts only."""
     prompt = (
         "Search X (Twitter) for original public posts directly discussed in this transcript. "
@@ -132,40 +166,61 @@ def discover_tweets(words: list[dict]) -> list[dict]:
         "Do not use secondary screenshots, reposts, or recreated cards. Transcript:\n"
         + json.dumps(words, ensure_ascii=True)
     )
-    return [item for item in _array(_grok_hidden(prompt)) if item.get("kind") == "tweets"]
+    return [item for item in _parse_discovery_items(_grok_hidden(prompt)) if item.get("kind") == "tweets"]
 
 
-def discover_stages(words: list[dict], enabled: frozenset[str], previous: dict,
-                    review: list[dict]) -> tuple[list[dict], dict]:
+def discover_stages(
+    words: Sequence[TranscriptWord], enabled: frozenset[str], previous: dict, review: list[dict]
+) -> tuple[list[dict], dict]:
     """Reuse complete independent searches, including successful empty results."""
     items, states = [], {}
-    for stage, kinds in (("web discovery", enabled - {"tweets"}),
-                         ("X discovery", enabled.intersection({"tweets"}))):
+    for stage, kinds in (
+        ("web discovery", enabled - {"tweets"}),
+        ("X discovery", enabled.intersection({"tweets"})),
+    ):
         if not kinds:
             continue
         cached = previous.get(stage, {})
-        if (isinstance(cached, dict) and cached.get("status") == "complete"
-                and cached.get("kinds") == sorted(kinds)
-                and isinstance(cached.get("items"), list)
-                and all(isinstance(item, dict) for item in cached["items"])):
+        if (
+            isinstance(cached, dict)
+            and cached.get("status") == "complete"
+            and cached.get("kinds") == sorted(kinds)
+            and isinstance(cached.get("items"), list)
+            and all(isinstance(item, dict) for item in cached["items"])
+        ):
             states[stage] = cached
             items.extend(cached["items"])
             continue
         if stage == "web discovery" and not os.environ.get("ANTHROPIC_API_KEY"):
             if kinds - {"places"}:
-                review.append({"stage": stage, "status": "skipped", "kinds": sorted(kinds),
-                               "reason": "ANTHROPIC_API_KEY is not set; explicit items still work",
-                               "retry_when": "web available"})
+                review.append(
+                    {
+                        "stage": stage,
+                        "status": "skipped",
+                        "kinds": sorted(kinds),
+                        "reason": "ANTHROPIC_API_KEY is not set; explicit items still work",
+                        "retry_when": "web available",
+                    }
+                )
             continue  # The local place-name fallback does not require a paid search.
         try:
-            found = discover_web(words, kinds) if stage == "web discovery" else discover_tweets(words)
+            found = (
+                discover_web(words, kinds) if stage == "web discovery" else discover_tweets(words)
+            )
             if not isinstance(found, list) or any(not isinstance(item, dict) for item in found):
                 raise ValueError("Discovery entries must be JSON objects")
             states[stage] = {"status": "complete", "kinds": sorted(kinds), "items": found}
             items.extend(found)
         except Exception as exc:  # A failed optional source must preserve the captioned render.
-            review.append({"stage": stage, "reason": str(exc), "status": "skipped",
-                           "retry_when": "online", "kinds": sorted(kinds)})
+            review.append(
+                {
+                    "stage": stage,
+                    "reason": str(exc),
+                    "status": "skipped",
+                    "retry_when": "online",
+                    "kinds": sorted(kinds),
+                }
+            )
     return items, states
 
 
@@ -175,10 +230,15 @@ def _worker(source: Path, dest: Path) -> None:
         payload = {"stdout": result.stdout, "returncode": result.returncode}
     except (OSError, ValueError, RuntimeError) as exc:
         payload = {"error": str(exc)}
-    dest.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
+    atomic_write(dest, json.dumps(payload, ensure_ascii=True))
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Run the hidden discovery worker command."""
     if len(sys.argv) != 4 or sys.argv[1] != "--grok-worker":
         raise SystemExit("Internal source-discovery worker")
     _worker(Path(sys.argv[2]), Path(sys.argv[3]))
+
+
+if __name__ == "__main__":
+    main()

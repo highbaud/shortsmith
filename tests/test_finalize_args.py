@@ -1,4 +1,4 @@
-"""Argument-handling tests for scripts/finalize.py.
+"""Argument handling for the finalization library and its stable command.
 
 We can't run the real Phase 0 / 1 / 2 (they need Remotion, ffmpeg, and
 rendered shorts on disk), so we mock the phase functions and verify the CLI
@@ -12,8 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import finalize  # noqa: E402
+from shortsmith.rendering import finalize
 
 
 @pytest.fixture(autouse=True)
@@ -101,3 +100,26 @@ def test_offline_sets_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
         _run("--offline")
 
     assert fake_env.get("SHORTSMITH_BROLL_OFFLINE") == "1"
+
+
+def test_phase0_finishes_every_short_then_fails_on_a_render_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from shortsmith.rendering import apply_remotion
+
+    good, bad = tmp_path / "short-01-good", tmp_path / "short-02-bad"
+    rendered = []
+
+    def render(proj: Path, **_kwargs) -> Path:
+        if proj == bad:
+            raise RuntimeError("bundle crashed")
+        rendered.append(proj)
+        return proj / "renders" / "final_remotion.mp4"
+
+    monkeypatch.setattr(finalize, "_clear_remotion_cache", lambda: None)
+    monkeypatch.setattr(finalize, "scoped_projects", lambda _slugs: [(tmp_path, bad), (tmp_path, good)])
+    monkeypatch.setattr(apply_remotion, "apply_remotion", render)
+    monkeypatch.delenv("SHORTSMITH_BROLL_SOURCES", raising=False)
+    with pytest.raises(RuntimeError, match="Remotion render failed for: short-02-bad"):
+        finalize.phase0_remotion("minimal")
+    assert rendered == [good]

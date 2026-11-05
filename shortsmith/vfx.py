@@ -23,11 +23,16 @@ Disable wholesale via cfg.vfx_enabled = False (or SHORTSMITH_VFX=off).
 """
 from __future__ import annotations
 
-import re
+import logging
+import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .config import Config
-from .sfx import _NUMBER_RE, _norm_word
+from .records import ClipSpec, TranscriptWord
+from .sfx import is_bigstat_callout, semantic_word_cues
+
+log = logging.getLogger(__name__)
 
 # Per-effect default durations (ms). Tuned so flash is shortest (punctuates),
 # zoom-punch in the middle (subtle body), glare longest (cinematic sweep).
@@ -45,10 +50,10 @@ class VFXEvent:
     t: float                  # seconds into the final clip
     effect: str               # 'glare' | 'zoom-punch' | 'flash'
     color: str = "#ffffff"    # hex tint
-    intensity: float = 1.0    # 0..1 multiplier on opacity / scale-bump
+    intensity: float = 1.0    # Nonnegative multiplier; values above 1 add emphasis.
     duration_ms: int = 280
 
-    def to_props(self) -> dict:
+    def to_props(self) -> dict[str, str | int | float]:
         """Shape matches the JSON the Remotion VFX layer expects."""
         return {
             "t": float(self.t),
@@ -59,20 +64,15 @@ class VFXEvent:
         }
 
 
-def plan_vfx_events(clip: dict, words: list[dict], cfg: Config,
+def plan_vfx_events(clip: ClipSpec, words: Sequence[TranscriptWord], cfg: Config,
                     clip_duration: float) -> list[VFXEvent]:
-    """Compute the ordered VFX events for one clip (no file I/O).
-
-    Mirrors the SFX trigger logic in sfx.plan_events. Same 4 slots that
-    fire semantic SFX cues also fire visual cues — they read as one
-    coordinated "punctuation" beat.
-    """
-    if not getattr(cfg, "vfx_enabled", True):
+    """Return the ordered visual cues for one clip without file access."""
+    if not cfg.vfx_enabled:
         return []
 
-    triggers: dict[str, list[str]] = getattr(cfg, "vfx_triggers", {}) or {}
-    colors: dict[str, str] = getattr(cfg, "vfx_colors", {}) or {}
-    intensity = float(getattr(cfg, "vfx_intensity", 1.0))
+    triggers = cfg.vfx_triggers or {}
+    colors = cfg.vfx_colors or {}
+    intensity = float(cfg.vfx_intensity)
 
     events: list[VFXEvent] = []
 
@@ -91,52 +91,27 @@ def plan_vfx_events(clip: dict, words: list[dict], cfg: Config,
                 duration_ms=DEFAULT_DURATIONS_MS[fx],
             ))
 
-    # --- Hook impact ---
-    if clip.get("hook") and str(clip["hook"].get("text", "")).strip():
+    hook = clip.get("hook")
+    if isinstance(hook, dict) and str(hook.get("text", "")).strip():
         emit(0.05, "hook-impact")
 
-    semantic_on = (getattr(cfg, "sfx_semantic_mode", "sparing")
+    semantic_on = (cfg.sfx_semantic_mode
                    or "sparing").lower() != "off"
 
-    # --- Bigstat $ callouts -> ding ---
     if semantic_on:
         for co in (clip.get("callouts") or []):
             try:
                 ls = float(co["local_start"])
-            except (KeyError, ValueError, TypeError):
+                if not math.isfinite(ls):
+                    raise ValueError("callout timing must be finite")
+            except (KeyError, ValueError, TypeError) as exc:
+                log.warning("Skipping VFX callout with invalid timing: %s", exc)
                 continue
-            is_ding = ((co.get("style") or "").lower() == "bigstat"
-                       and _NUMBER_RE.search(str(co.get("text", ""))))
-            if is_ding:
+            if is_bigstat_callout(co):
                 emit(max(0.0, min(ls, clip_duration)), "ding")
 
-    # --- Money mention -> cash-register ---
-    if semantic_on and words:
-        money = {m.lower() for m in getattr(cfg, "money_keywords", [])}
-        mode = (getattr(cfg, "sfx_semantic_mode", "sparing") or "sparing").lower()
-        for w in words:
-            stem = _norm_word(w)
-            is_money = stem in money or _NUMBER_RE.search(stem) is not None and "$" in stem
-            if not is_money and ("$" in stem or re.fullmatch(r"\d+[km]?", stem)):
-                is_money = True
-            if is_money:
-                t = float(w.get("start", 0.0))
-                emit(t, "cash-register")
-                if mode == "sparing":
-                    break
-
-    # --- Negative outcome -> wrong-answer ---
-    if semantic_on and words:
-        negatives = {m.lower() for m in getattr(cfg, "negative_keywords", [])}
-        mode = (getattr(cfg, "sfx_semantic_mode", "sparing") or "sparing").lower()
-        if negatives:
-            for w in words:
-                stem = _norm_word(w)
-                if stem in negatives:
-                    t = float(w.get("start", 0.0))
-                    emit(t, "wrong-answer")
-                    if mode == "sparing":
-                        break
+    for time, slot in semantic_word_cues(words, cfg, clip_duration):
+        emit(time, slot)
 
     # Sort by time. We DO NOT dedup across effects — a hook frame
     # legitimately runs glare + zoom-punch + flash simultaneously.

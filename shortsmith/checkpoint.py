@@ -15,9 +15,13 @@ Best-effort: a missing or corrupt file just means "nothing done yet".
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
+from ._files import atomic_write
+
 FILENAME = ".progress.json"
+log = logging.getLogger(__name__)
 
 
 def _path(work_dir: Path) -> Path:
@@ -44,12 +48,11 @@ def load(work_dir: Path) -> dict:
 
 
 def _save(work_dir: Path, data: dict) -> None:
+    target = _path(work_dir)
     try:
-        _path(work_dir).write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-    except OSError:
-        pass  # checkpointing is best-effort; never crash the pipeline over it
+        atomic_write(target, json.dumps(data, indent=2, ensure_ascii=False))
+    except OSError as exc:
+        log.warning("Could not save checkpoint %s: %s", target, exc)
 
 
 def step_done(work_dir: Path, step: int) -> bool:
@@ -60,6 +63,13 @@ def mark_step(work_dir: Path, step: int) -> None:
     data = load(work_dir)
     data["steps"][str(step)] = True
     _save(work_dir, data)
+
+
+def clear_step(work_dir: Path, step: int) -> None:
+    """Remove an earlier success before retrying a stage."""
+    data = load(work_dir)
+    if data["steps"].pop(str(step), None) is not None:
+        _save(work_dir, data)
 
 
 def is_rendered(work_dir: Path, slug: str) -> bool:

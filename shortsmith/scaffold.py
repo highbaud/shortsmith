@@ -16,14 +16,19 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Literal
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ._files import atomic_write
 from ._media import probe_duration
-from .config import TEMPLATE_REF, Config, make_output_dir
+from .captions import normalize_dashes, strip_hashtags
+from .config import TEMPLATE_REF, make_output_dir
+from .overlay_timing import callout_timing, hook_duration
+from .records import ClipManifest, ClipSpec, TranscriptWord, current_media, require_words
 
 log = logging.getLogger(__name__)
 
@@ -44,10 +49,12 @@ def _load_style(name: str) -> dict:
 # Fields the reframe step works out that the downstream caption/render layer
 # needs. They are computed from the footage, so they cannot be in the authored
 # clips.json, carry them across into the copy that ships with the projects.
-_MANIFEST_PASSTHROUGH = ("caption_band", "layout", "layout_preset")
+_MANIFEST_PASSTHROUGH: tuple[Literal["caption_band", "layout", "layout_preset"], ...] = (
+    "caption_band", "layout", "layout_preset",
+)
 
 
-def _write_merged_clips(clips: list[dict], manifests: list[dict], dest: Path) -> None:
+def _write_merged_clips(clips: list[ClipSpec], manifests: list[ClipManifest], dest: Path) -> None:
     """Write _clips.json: the authored clip specs plus the reframe-derived
     fields, joined on rank. Authored values win, so a hand-set caption_band is
     never overwritten by a detected one."""
@@ -61,20 +68,19 @@ def _write_merged_clips(clips: list[dict], manifests: list[dict], dest: Path) ->
                 if key in m and key not in out:
                     out[key] = m[key]
         merged.append(out)
-    dest.write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(dest, json.dumps(merged, indent=2, ensure_ascii=False))
 
 
 def scaffold_all(
-    clip_manifests: list[dict],
-    clips: list[dict],
+    clip_manifests: list[ClipManifest],
+    clips: list[ClipSpec],
     source_video: Path,
     work_dir: Path,
-    cfg: Config,
+    style: str,
 ) -> list[Path]:
     """Build one Hyperframes project per clip. Returns list of project dirs."""
     out_root = make_output_dir(source_video)
 
-    # Copy whole-source transcript + clips.json into the per-source root
     src_transcript = work_dir / "transcript.json"
     src_clips = work_dir / "clips.json"
     if src_transcript.exists():
@@ -84,7 +90,8 @@ def scaffold_all(
 
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATES_DIR)),
-        autoescape=select_autoescape(["html"]),
+        # Match "*.html.j2"; ["html"] matched nothing, so model text went into HTML raw.
+        autoescape=select_autoescape(["html.j2"]),
         keep_trailing_newline=True,
     )
 
@@ -96,13 +103,13 @@ def scaffold_all(
         if clip is None:
             log.warning("Clip rank %d in manifest has no matching clip metadata; skipping", rank)
             continue
-        project = _scaffold_one(env, m, clip, source_video, out_root, cfg)
+        project = _scaffold_one(env, m, clip, source_video, out_root, style)
         project_dirs.append(project)
 
     return project_dirs
 
 
-def _load_clip_words(manifest: dict, rank: int) -> list[dict]:
+def _load_clip_words(manifest: ClipManifest, rank: int) -> list[TranscriptWord]:
     """The clip's aligned word list, or [] when step 6 left none behind.
 
     Resolved by hand rather than with `Path(manifest.get("words_path", ""))`:
@@ -112,18 +119,18 @@ def _load_clip_words(manifest: dict, rank: int) -> list[dict]:
     """
     ref = str(manifest.get("words_path") or "")
     if ref and Path(ref).is_file():
-        return json.loads(Path(ref).read_text(encoding="utf-8"))
+        return require_words(json.loads(Path(ref).read_text(encoding="utf-8")), ref)
     log.warning("Words JSON missing for clip %d; captions will be empty", rank)
     return []
 
 
 def _scaffold_one(
     env: Environment,
-    manifest: dict,
-    clip: dict,
+    manifest: ClipManifest,
+    clip: ClipSpec,
     source_video: Path,
     out_root: Path,
-    cfg: Config,
+    style_name: str,
 ) -> Path:
     rank = manifest["rank"]
     slug = clip.get("slug") or manifest.get("slug") or f"clip-{rank}"
@@ -132,39 +139,30 @@ def _scaffold_one(
     (project_dir / "compositions").mkdir(exist_ok=True)
     (project_dir / "assets").mkdir(exist_ok=True)
     (project_dir / "renders").mkdir(exist_ok=True)
+    # The template declares this face so HyperFrames 0.9+ cannot swap in League Gothic.
+    shutil.copytree(TEMPLATES_DIR / "fonts", project_dir / "assets" / "fonts", dirs_exist_ok=True)
 
-    # Locate the final clip video
-    final_clip = Path(manifest.get("vertical_path")
-                      or manifest.get("enhanced_path")
-                      or manifest.get("cleaned_path")
-                      or manifest["raw_path"])
+    final_clip = Path(manifest.get("vertical_path") or current_media(manifest))
 
-    # Place the clip into assets/
     clip_dst = project_dir / "assets" / "clip-edit.mp4"
     shutil.copy(final_clip, clip_dst)
 
-    # Probe actual final duration (auto-editor may have shortened it further)
     duration = probe_duration(clip_dst)
 
-    # Load the clip's word-level transcript (from step 6: retranscribe)
     words = _load_clip_words(manifest, rank)
 
-    # Save the clip's transcript alongside (handy for downstream edits)
-    (project_dir / "assets" / "words.json").write_text(
-        json.dumps(words, indent=2, ensure_ascii=False), encoding="utf-8"
+    atomic_write(
+        project_dir / "assets" / "words.json", json.dumps(words, indent=2, ensure_ascii=False)
     )
 
     # Composition IDs unique per project
     comp_id_main = f"short-{rank:02d}-main"
 
-    # Build callouts list — each item has html ready to inline in the template.
-    callouts = _build_callouts(clip, rank, duration, cfg)
+    callouts = _build_callouts(clip, rank, duration)
 
-    # Build the opening hook (thumbnail moment) if present.
     hook = _build_hook(clip, duration)
 
-    # Load style preset and render index.html.
-    style = _load_style(cfg.style)
+    style = _load_style(style_name)
     index_html = env.get_template("index.html.j2").render(
         title=f"Short {rank:02d} — {slug}",
         comp_id_main=comp_id_main,
@@ -173,7 +171,7 @@ def _scaffold_one(
         hook=hook,
         style=style,
     )
-    (project_dir / "index.html").write_text(index_html, encoding="utf-8")
+    atomic_write(project_dir / "index.html", index_html)
 
     # Clean up old sub-comps from prior runs (different style era).
     comps_dir = project_dir / "compositions"
@@ -184,7 +182,6 @@ def _scaffold_one(
             except OSError:
                 pass
 
-    # meta.json
     meta = {
         "id": f"short-{rank:02d}-{slug}",
         "name": f"Short {rank:02d} — {clip.get('hook_text','')[:60]}",
@@ -203,77 +200,34 @@ def _scaffold_one(
             "duration": duration,
         },
     }
-    (project_dir / "meta.json").write_text(
-        json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+    atomic_write(
+        project_dir / "meta.json", json.dumps(meta, indent=2, ensure_ascii=False)
     )
 
-    # hyperframes.json — registry pointer (copy from reference)
     src_hf = TEMPLATE_REF / "hyperframes.json"
     if src_hf.exists():
         shutil.copy(src_hf, project_dir / "hyperframes.json")
     else:
-        # Fallback minimal config
-        (project_dir / "hyperframes.json").write_text(json.dumps({
+        atomic_write(project_dir / "hyperframes.json", json.dumps({
             "$schema": "https://hyperframes.heygen.com/schema/hyperframes.json",
             "registry": "https://raw.githubusercontent.com/heygen-com/hyperframes/main/registry",
             "paths": {"blocks": "compositions", "components": "compositions/components", "assets": "assets"},
-        }, indent=2), encoding="utf-8")
+        }, indent=2))
 
     # Instagram caption — write a .txt with the same stem as the project folder,
     # placed at the source-slug parent so all captions are scannable side-by-side.
-    caption_text = normalize_dashes(_strip_hashtags(clip.get("instagram_caption") or _fallback_caption(clip)))
+    caption_text = normalize_dashes(strip_hashtags(clip.get("instagram_caption") or _fallback_caption(clip)))
     caption_path = project_dir.parent / f"{project_dir.name}.txt"
-    caption_path.write_text(caption_text + "\n", encoding="utf-8")
+    atomic_write(caption_path, caption_text + "\n")
     # Also drop one inside the project for portability.
-    (project_dir / "caption.txt").write_text(caption_text + "\n", encoding="utf-8")
+    atomic_write(project_dir / "caption.txt", caption_text + "\n")
 
     log.info("Scaffolded %s (duration=%.2fs, %d callouts, ig-caption=%dch)",
              project_dir.relative_to(project_dir.parent.parent), duration, len(callouts), len(caption_text))
     return project_dir
 
 
-# Matches a hashtag token (#word, #word-with-dashes) plus any leading whitespace,
-# so removing it doesn't leave dangling spaces.
-_HASHTAG_RE = re.compile(r"[ \t]*#\w[\w-]*")
-
-
-# Em / en / figure dashes + U+FFFD (the mojibake a corrupted em-dash becomes in
-# some clip-gen output). All get normalized to plain punctuation that always
-# renders and doesn't read as AI.
-_DASH_CHARS = "—–‒―�"  # em, en, figure, horizontal bar, U+FFFD mojibake
-_RANGE_DASH_RE = re.compile(rf"(?<=\d)\s*[{_DASH_CHARS}]\s*(?=\d)")
-_PROSE_DASH_RE = re.compile(rf"\s*[{_DASH_CHARS}]\s*")
-
-
-def normalize_dashes(text: str) -> str:
-    """Replace em/en/figure dashes and the U+FFFD mojibake with plain punctuation:
-    a hyphen between digits (ranges like 2020-2021), a comma elsewhere (a prose
-    pause). Then tidy spacing. Safe to run repeatedly."""
-    if not text:
-        return text
-    text = _RANGE_DASH_RE.sub("-", text)            # numeric ranges -> hyphen
-    text = _PROSE_DASH_RE.sub(", ", text)           # prose pause -> comma
-    text = re.sub(r"\s+([,.!?;:])", r"\1", text)    # no space before punctuation
-    text = re.sub(r",\s*,", ",", text)              # collapse doubled commas
-    text = re.sub(r"(^|\n)\s*,\s*", r"\1", text)    # drop a comma left at line start
-    text = re.sub(r"[ \t]{2,}", " ", text)          # collapse space runs
-    return text
-
-
-def _strip_hashtags(text: str) -> str:
-    """Remove every #hashtag from a caption and tidy the resulting whitespace.
-
-    Captions ship without hashtags (user preference) — the creator adds their
-    own per-platform. Drops all '#tag' tokens, then collapses the blank lines
-    that an end-of-caption hashtag block leaves behind.
-    """
-    cleaned = _HASHTAG_RE.sub("", text)
-    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)   # trailing spaces per line
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)   # collapse 3+ blank lines
-    return cleaned.strip()
-
-
-def _fallback_caption(clip: dict) -> str:
+def _fallback_caption(clip: ClipSpec) -> str:
     """Build a minimal Instagram caption from clip metadata when Claude didn't
     include one (e.g., for clips selected before instagram_caption was in the
     prompt schema, or for hand-crafted smoke-test clips).
@@ -305,7 +259,7 @@ VALID_COLORS = {"gold", "red", "green"}
 _LEGACY_COLORS = {"orange": "red", "cyan": "gold"}
 
 
-def _normalize_color(value: object, default: str) -> str:
+def _normalize_color(value: str | None, default: str) -> str:
     """A clips.json color name mapped onto the current palette.
 
     Anything the palette does not carry falls back to `default`, which is the
@@ -316,12 +270,16 @@ def _normalize_color(value: object, default: str) -> str:
     return color if color in VALID_COLORS else default
 
 
-def _accent_words(raw: object) -> list[str]:
-    """The accent-word list of a clips.json entry, trimmed, blanks dropped."""
-    return [str(w).strip() for w in (raw or []) if str(w).strip()]
+def _accent_words(raw: Iterable[object] | str | None) -> list[str]:
+    """The accent-word list of a clips.json entry, trimmed, blanks dropped.
+
+    A bare string is one accent word; iterating it would accent single letters.
+    """
+    words = [raw] if isinstance(raw, str) else (raw or [])
+    return [str(w).strip() for w in words if str(w).strip()]
 
 
-def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) -> list[dict]:
+def _build_callouts(clip: ClipSpec, rank: int, clip_duration: float) -> list[dict]:
     """Build the per-clip callout list `index.html.j2` renders.
 
     Each dict carries the timing (`local_start`, `duration`), the presentation
@@ -335,7 +293,7 @@ def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) ->
           "text": "BIT ME IN THE ASS",
           "accent": ["BIT"],            # optional, list of words to color-accent
           "eyebrow": "ON GREED",         # optional, small caps label above
-          "color": "orange"              # "orange" | "cyan" (default cyan)
+          "color": "gold"                # "gold" | "red" | "green" (default gold)
         }]
     """
     raw = clip.get("callouts") or []
@@ -344,15 +302,11 @@ def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) ->
 
     out: list[dict] = []
     for i, co in enumerate(raw, start=1):
-        try:
-            local_start = float(co["local_start"])
-            duration = float(co.get("duration", 2.0))
-        except (KeyError, ValueError, TypeError):
+        timing = callout_timing(co, clip_duration)
+        if timing is None:
             log.warning("Clip %d callout %d: bad timestamp; skipping", rank, i)
             continue
-
-        local_start = max(0.0, min(local_start, max(0.0, clip_duration - 0.5)))
-        duration = max(0.6, min(duration, clip_duration - local_start))
+        local_start, duration = timing
 
         raw_text = str(co.get("text", "")).strip()
         if not raw_text:
@@ -396,7 +350,7 @@ def _build_callouts(clip: dict, rank: int, clip_duration: float, cfg: Config) ->
     return out
 
 
-def _build_hook(clip: dict, clip_duration: float) -> dict | None:
+def _build_hook(clip: ClipSpec, clip_duration: float) -> dict | None:
     """Build the opening-slam hook from a clip's `hook` field.
 
     Schema:
@@ -425,14 +379,7 @@ def _build_hook(clip: dict, clip_duration: float) -> dict | None:
 
     color = _normalize_color(raw.get("color"), "red")
 
-    try:
-        duration = float(raw.get("duration", 2.6))
-    except (TypeError, ValueError):
-        log.warning("Hook duration %r is not a number; using the 2.6s default",
-                    raw.get("duration"))
-        duration = 2.6
-    # Clamp: at least 1.5s for legibility, no more than 30% of clip
-    duration = max(1.5, min(duration, max(2.0, clip_duration * 0.30)))
+    duration = hook_duration(raw, clip_duration)
 
     accent = _accent_words(raw.get("accent"))
     # Hook uses the "slam" style — uppercase like a punch

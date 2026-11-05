@@ -16,6 +16,9 @@ from pathlib import Path
 
 import numpy as np
 
+from ._process import resolve_executable
+from .records import TranscriptWord
+
 log = logging.getLogger(__name__)
 
 SR = 16000
@@ -29,7 +32,7 @@ def measure_levels(path: Path) -> tuple[np.ndarray, float] | None:
     """(10 ms dB levels, noise floor) of the audio, or None when it cannot be measured."""
     try:
         raw = subprocess.run(
-            ["ffmpeg", "-v", "error", "-i", str(path), "-vn", "-ac", "1",
+            [resolve_executable("ffmpeg"), "-v", "error", "-i", str(path), "-vn", "-ac", "1",
              "-ar", str(SR), "-f", "f32le", "-"],
             check=True, capture_output=True,
         ).stdout
@@ -51,7 +54,7 @@ def measure_levels(path: Path) -> tuple[np.ndarray, float] | None:
     return db, floor
 
 
-def repair_words(words: list[dict], db: np.ndarray, floor: float) -> list[dict]:
+def repair_words(words: list[TranscriptWord], db: np.ndarray, floor: float) -> list[TranscriptWord]:
     """Return new words with their spans moved off measured pauses.
 
     Edge silence is trimmed. A word split by one pause keeps its louder side and
@@ -82,7 +85,7 @@ def repair_words(words: list[dict], db: np.ndarray, floor: float) -> list[dict]:
         if i + 1 < len(spans):  # starts must stay in order for overlapping input words
             new_start = min(new_start, spans[i + 1][0])
         spans[i] = [max(new_start, start), min(new_end, end)]
-    out = []
+    out: list[TranscriptWord] = []
     for word, (start, end) in zip(words, spans, strict=True):
         start, end = round(start, 3), round(end, 3)
         same = (start, end) == (float(word["start"]), float(word["end"]))

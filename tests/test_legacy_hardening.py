@@ -16,11 +16,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts import build_metricool_payloads, build_sfx_index
 from shortsmith import captions, checkpoint
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import build_metricool_payloads  # noqa: E402
-import build_sfx_index  # noqa: E402
 
 EMPTY = {"steps": {}, "rendered": []}
 
@@ -143,3 +140,15 @@ def test_measure_levels_survives_undecodable_stderr(tmp_path: Path) -> None:
     missing = tmp_path / "Ángel Íñigo.wav"
     levels = build_sfx_index.measure_levels(missing)
     assert levels == {"peak_dbfs": None, "mean_dbfs": None}
+
+
+def test_slots_fill_every_post_past_the_old_day_cap() -> None:
+    from datetime import date
+
+    slots = build_metricool_payloads._slots(date(2026, 1, 1), 2, ["09:00", "13:00", "18:00"], 3, "UTC")
+    assert [iso for iso, _ in slots] == [
+        "2026-01-01T09:00:00", "2026-01-01T13:00:00", "2026-01-02T09:00:00",
+    ]
+    long_run = build_metricool_payloads._slots(date(2026, 1, 1), 1, ["09:00"], 6000, "UTC")
+    assert len(long_run) == 6000
+    assert long_run[-1][0] == "2042-06-05T09:00:00"

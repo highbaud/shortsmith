@@ -14,9 +14,12 @@ import subprocess
 from pathlib import Path
 
 from . import story_review
+from ._files import atomic_write
 from ._media import probe_duration
+from ._process import resolve_executable
 from .clean_clips import plan_cleaning
 from .config import Config
+from .records import ClipManifest, ClipSpec, Segment, TranscriptWord
 from .word_pauses import PAUSE_MIN_S
 
 log = logging.getLogger(__name__)
@@ -25,47 +28,41 @@ PUNCTUATION_END = {".", "!", "?", '."', '!"', '?"', '.”', '!”', '?”'}
 
 
 def cut_all(
-    clips: list[dict],
-    words: list[dict],
+    clips: list[ClipSpec],
+    words: list[TranscriptWord],
     source_video: Path,
     work_dir: Path,
     cfg: Config,
-) -> list[dict]:
+) -> list[ClipManifest]:
     """Cut every clip from `clips` to `work_dir/raw/short-NN.mp4`. Return manifests."""
     raw_dir = work_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    manifests = []
+    manifests: list[ClipManifest] = []
     for clip in clips:
         manifest = cut_one(clip, words, source_video, raw_dir, cfg)
         manifests.append(manifest)
 
-    (work_dir / "cut_manifests.json").write_text(
-        json.dumps(manifests, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    atomic_write(work_dir / "cut_manifests.json",
+                 json.dumps(manifests, indent=2, ensure_ascii=False))
     return manifests
 
 
 def cut_one(
-    clip: dict,
-    words: list[dict],
+    clip: ClipSpec,
+    words: list[TranscriptWord],
     source_video: Path,
     raw_dir: Path,
     cfg: Config,
-) -> dict:
+) -> ClipManifest:
     """Cut one clip — snap boundaries, ffmpeg-cut each segment, xfade-concat."""
     rank = clip["rank"]
     requested = clip["segments"]
     snapped = plan_segments(clip, words, cfg)
     review = clip.get("story_review")
-    if cfg.story_check and review is not None and (
-        not isinstance(review, dict)
-        or review.get("decision") != "pass" or review.get("reviewed_segments") != snapped
-        or review.get("reviewed_seam_xfade_seconds") != cfg.seam_xfade_seconds
-        or review.get("source_digest") != story_review.source_digest(words)
-        or review.get("retained_speech_digest") != story_review.retained_speech_digest(
-            words, plan_cleaning(words, snapped, cfg)["retained_segments"]
-        )
+    if cfg.story_check and review is not None and not story_review.matches_approval(
+        review, words, snapped, plan_cleaning(words, snapped, cfg)["retained_segments"],
+        cfg.seam_xfade_seconds,
     ):
         raise ValueError(
             f"Clip {rank}: cuts differ from the approved story review. "
@@ -96,7 +93,7 @@ def cut_one(
         except OSError:
             pass
 
-    manifest = {
+    manifest: ClipManifest = {
         "rank": rank,
         "slug": clip["slug"],
         "requested_segments": requested,
@@ -111,9 +108,9 @@ def cut_one(
     return manifest
 
 
-def plan_segments(clip: dict, words: list[dict], cfg: Config) -> list[list[float]]:
+def plan_segments(clip: ClipSpec, words: list[TranscriptWord], cfg: Config) -> list[Segment]:
     """Plan the existing boundary snaps without cutting media."""
-    snapped: list[list[float]] = []
+    snapped: list[Segment] = []
     for s_start, s_end in clip.get("segments") or [[clip["start"], clip["end"]]]:
         new_start = _snap_boundary(s_start, words, cfg, prefer_after=False)
         new_end = _snap_boundary(s_end, words, cfg, prefer_after=True)
@@ -136,7 +133,7 @@ def plan_segments(clip: dict, words: list[dict], cfg: Config) -> list[list[float
 
 def _snap_boundary(
     t: float,
-    words: list[dict],
+    words: list[TranscriptWord],
     cfg: Config,
     *,
     prefer_after: bool,
@@ -261,7 +258,7 @@ def _snap_boundary(
 
 def _ffmpeg_cut_segments(
     source: Path,
-    segments: list[list[float]],
+    segments: list[Segment],
     raw_dir: Path,
     rank: int,
 ) -> list[Path]:
@@ -272,7 +269,7 @@ def _ffmpeg_cut_segments(
         # Use -ss before -i for speed (keyframe seek), then -ss again after -i for accuracy
         # — combined with re-encode for frame-accuracy.
         cmd = [
-            "ffmpeg", "-y",
+            resolve_executable("ffmpeg"), "-y",
             "-ss", f"{start:.3f}",
             "-to", f"{end:.3f}",
             "-i", str(source),
@@ -302,7 +299,7 @@ def _ffmpeg_concat_with_xfade(
     if len(seg_paths) == 1:
         # Simple copy / passthrough — but we need to re-encode to ensure faststart
         cmd = [
-            "ffmpeg", "-y",
+            resolve_executable("ffmpeg"), "-y",
             "-i", str(seg_paths[0]),
             "-c", "copy",
             "-movflags", "+faststart",
@@ -347,7 +344,7 @@ def _ffmpeg_concat_with_xfade(
 
     filter_complex = ";".join(filter_parts)
     cmd = [
-        "ffmpeg", "-y",
+        resolve_executable("ffmpeg"), "-y",
         *inputs,
         "-filter_complex", filter_complex,
         "-map", last_v,

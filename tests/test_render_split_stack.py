@@ -4,16 +4,13 @@ captions fall onto a face."""
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import render_remotion as rr  # noqa: E402
-
-from shortsmith.gallery import stack_layout  # noqa: E402
-from shortsmith.layouts import load_preset  # noqa: E402
+from shortsmith.gallery import stack_layout
+from shortsmith.layouts import load_preset
+from shortsmith.rendering import render_remotion as rr
 
 
 def test_badge_sits_on_the_backdrop_beside_the_top_square_below_the_top_bar() -> None:

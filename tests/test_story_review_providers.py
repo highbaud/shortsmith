@@ -73,7 +73,7 @@ def test_claude_review_uses_separate_prompt_and_config(monkeypatch, cfg):
     ]
     factory, create = mock_claude(monkeypatch, response)
 
-    assert claude_backend.review("Review the story.", "Exact source words", cfg) == REVIEWS
+    assert claude_backend.review_story_plans("Review the story.", "Exact source words", cfg) == REVIEWS
     factory.assert_called_once_with(api_key="test-key")
     create.assert_called_once_with(
         model="test-claude",
@@ -87,39 +87,39 @@ def test_claude_review_uses_separate_prompt_and_config(monkeypatch, cfg):
 def test_claude_review_rejects_unfinished_response(monkeypatch, cfg, reason):
     mock_claude(monkeypatch, claude_response(stop_reason=reason))
     with pytest.raises(RuntimeError, match="did not finish"):
-        claude_backend.review("Review", "Words", cfg)
+        claude_backend.review_story_plans("Review", "Words", cfg)
 
 
 @pytest.mark.parametrize("text", ["", "[]", "{}", "[{}", "no review"])
 def test_claude_review_rejects_empty_or_bad_json(monkeypatch, cfg, text):
     mock_claude(monkeypatch, claude_response(text))
     with pytest.raises(RuntimeError, match="Story check"):
-        claude_backend.review("Review", "Words", cfg)
+        claude_backend.review_story_plans("Review", "Words", cfg)
 
 
 def test_claude_review_rejects_missing_content(monkeypatch, cfg):
     mock_claude(monkeypatch, SimpleNamespace(stop_reason="end_turn"))
     with pytest.raises(RuntimeError, match="invalid JSON"):
-        claude_backend.review("Review", "Words", cfg)
+        claude_backend.review_story_plans("Review", "Words", cfg)
 
 
 def test_claude_review_wraps_api_failure(monkeypatch, cfg):
     mock_claude(monkeypatch, error=OSError("offline"))
     with pytest.raises(RuntimeError, match="Claude request failed"):
-        claude_backend.review("Review", "Words", cfg)
+        claude_backend.review_story_plans("Review", "Words", cfg)
 
 
 def test_claude_review_missing_key_does_not_call_sdk(monkeypatch, cfg):
     factory, _ = mock_claude(monkeypatch)
     cfg.anthropic_api_key = ""
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
-        claude_backend.review("Review", "Words", cfg)
+        claude_backend.review_story_plans("Review", "Words", cfg)
     factory.assert_not_called()
 
 
 def test_claude_clip_picking_call_still_accepts_original_response(monkeypatch, cfg):
     _, create = mock_claude(monkeypatch, claude_response())
-    assert claude_backend.call(WORDS, cfg) == REVIEWS
+    assert claude_backend.select_clips(WORDS, cfg) == REVIEWS
     sent = create.call_args.kwargs
     assert sent["model"] == cfg.claude_model
     assert sent["max_tokens"] == cfg.clip_max_tokens
@@ -128,7 +128,7 @@ def test_claude_clip_picking_call_still_accepts_original_response(monkeypatch, c
 
 def test_local_review_forwards_prompt_model_and_output_limit(monkeypatch, cfg):
     requests = mock_local(monkeypatch, local_response("```json\n" + json.dumps(REVIEWS) + "\n```"))
-    assert ollama.review("Review the story.", "Exact source words", cfg) == REVIEWS
+    assert ollama.review_story_plans("Review the story.", "Exact source words", cfg) == REVIEWS
     assert len(requests) == 1
     request, _ = requests[0]
     assert request.full_url == "http://localhost:11434/v1/chat/completions"
@@ -145,7 +145,7 @@ def test_local_review_forwards_prompt_model_and_output_limit(monkeypatch, cfg):
 def test_local_review_rejects_unfinished_response(monkeypatch, cfg, reason):
     requests = mock_local(monkeypatch, local_response(finish_reason=reason))
     with pytest.raises(RuntimeError, match="did not finish"):
-        ollama.review("Review", "Words", cfg)
+        ollama.review_story_plans("Review", "Words", cfg)
     assert len(requests) == 1
 
 
@@ -166,19 +166,19 @@ def test_local_review_rejects_unfinished_response(monkeypatch, cfg, reason):
 def test_local_review_rejects_empty_bad_or_incomplete_response(monkeypatch, cfg, response):
     requests = mock_local(monkeypatch, response)
     with pytest.raises(RuntimeError, match="no usable review"):
-        ollama.review("Review", "Words", cfg)
+        ollama.review_story_plans("Review", "Words", cfg)
     assert len(requests) == ollama.DEFAULT_MAX_RETRIES
 
 
 def test_local_review_wraps_network_failure(monkeypatch, cfg):
     mock_local(monkeypatch, None, error=urllib.error.URLError("offline"))
     with pytest.raises(RuntimeError, match="failed to reach"):
-        ollama.review("Review", "Words", cfg)
+        ollama.review_story_plans("Review", "Words", cfg)
 
 
 def test_local_clip_picking_keeps_original_api_without_finish_reason(monkeypatch, cfg):
     requests = mock_local(monkeypatch, {"choices": [{"message": {"content": json.dumps(REVIEWS)}}]})
-    assert ollama.call(WORDS, cfg) == REVIEWS
+    assert ollama.select_clips(WORDS, cfg) == REVIEWS
     body = json.loads(requests[0][0].data)
     assert body["model"] == cfg.local_llm_model
     assert "A complete thought." in body["messages"][1]["content"]

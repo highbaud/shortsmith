@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import apply_remotion as ar  # noqa: E402
-import source_broll as sb  # noqa: E402
+from shortsmith.rendering import apply_remotion as ar
+from shortsmith.rendering import source_broll as sb
+from shortsmith.rendering import source_capture, source_discovery, source_evidence
 
 PNG = b"\x89PNG\r\n\x1a\nsource fixture pixels"
 
@@ -19,7 +18,7 @@ PNG = b"\x89PNG\r\n\x1a\nsource fixture pixels"
 def no_live_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("ANTHROPIC_API_KEY", "SHORTSMITH_BROLL_OFFLINE", "SHORTSMITH_BROLL_SOURCES"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(sb.source_capture, "fetch_public", lambda *_: pytest.fail("Unexpected HTTP"))
+    monkeypatch.setattr(source_capture, "fetch_public", lambda *_: pytest.fail("Unexpected HTTP"))
 
 
 def words(text: str) -> list[dict]:
@@ -56,9 +55,9 @@ def official(monkeypatch: pytest.MonkeyPatch, *, label: str = "Ripple",
         dest.write_bytes(PNG)
         return dest
 
-    monkeypatch.setattr(sb.source_capture, "fetch_public", fetch)
-    monkeypatch.setattr(sb.source_capture, "capture_page", capture)
-    monkeypatch.setattr(sb.source_capture, "download_image", capture)
+    monkeypatch.setattr(source_capture, "fetch_public", fetch)
+    monkeypatch.setattr(source_capture, "capture_page", capture)
+    monkeypatch.setattr(source_capture, "download_image", capture)
 
 
 @pytest.mark.parametrize("kind", ["press", "images"])
@@ -101,7 +100,7 @@ def test_old_official_cache_cannot_bypass_the_new_subject_claim_check(
     (tmp_path / "assets/words.json").write_text(json.dumps(transcript))
     (tmp_path / "assets/old.png").write_bytes(PNG)
     digest = hashlib.sha256(PNG).hexdigest()
-    transcript_hash = sb._transcript_hash(transcript)
+    transcript_hash = source_evidence.transcript_digest(transcript)
     slide = {"type": "image", "source_kind": "press", "src": "assets/old.png",
              "title": item["query"], "start": 2.25, "end": 5.75,
              "source_url": item["url"], "source_label": "Acme",
@@ -126,7 +125,7 @@ def test_cached_official_anchor_is_rechecked_after_gap_retiming(
     official(monkeypatch, label="Acme", quote="Acme announced payments.")
     first = sb.generate(tmp_path, transcript, [(4, 10)])
     assert [(slide["start"], slide["end"]) for slide in first] == [(4, 10)]
-    monkeypatch.setattr(sb.source_capture, "fetch_public", lambda *_: pytest.fail("Cache needs no HTTP"))
+    monkeypatch.setattr(source_capture, "fetch_public", lambda *_: pytest.fail("Cache needs no HTTP"))
     assert sb.generate(tmp_path, transcript, [(0, 6)]) == []
 
 
@@ -169,7 +168,7 @@ def test_discovery_retries_after_a_key_is_added_then_caches_the_complete_result(
     render_project: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = []
-    monkeypatch.setattr(sb.source_discovery, "discover_web", lambda *_: calls.append(True) or [])
+    monkeypatch.setattr(source_discovery, "discover_web", lambda *_: calls.append(True) or [])
     ar.apply_remotion(render_project)
     ar.apply_remotion(render_project)
     assert calls == []
@@ -192,7 +191,7 @@ def test_transient_discovery_failure_retries_without_forcing_the_render(
         return []
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture-key")
-    monkeypatch.setattr(sb.source_discovery, "discover_web", discover)
+    monkeypatch.setattr(source_discovery, "discover_web", discover)
     ar.apply_remotion(render_project)
     ar.apply_remotion(render_project)
     assert len(calls) == 2
@@ -206,7 +205,7 @@ def test_offline_discovery_retries_once_back_online(
     calls = []
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture-key")
     monkeypatch.setenv("SHORTSMITH_BROLL_OFFLINE", "1")
-    monkeypatch.setattr(sb.source_discovery, "discover_web", lambda *_: calls.append(True) or [])
+    monkeypatch.setattr(source_discovery, "discover_web", lambda *_: calls.append(True) or [])
     ar.apply_remotion(render_project)
     ar.apply_remotion(render_project)
     assert calls == []
@@ -221,7 +220,7 @@ def test_legacy_skipped_discovery_retries_after_key_recovery(
     render_project: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = []
-    monkeypatch.setattr(sb.source_discovery, "discover_web", lambda *_: calls.append(True) or [])
+    monkeypatch.setattr(source_discovery, "discover_web", lambda *_: calls.append(True) or [])
     ar.apply_remotion(render_project)
     # This is the exact review shape written before recovery metadata existed.
     (render_project / sb.REVIEW).write_text(json.dumps({"version": 1, "items": [{
@@ -249,7 +248,7 @@ def test_whole_generation_failure_is_retryable_with_a_missing_or_old_review(
         return generate(*args, **kwargs)
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture-key")
-    monkeypatch.setattr(sb.source_discovery, "discover_web", lambda *_: [])
+    monkeypatch.setattr(source_discovery, "discover_web", lambda *_: [])
     if has_old_review:
         ar.apply_remotion(render_project)
     monkeypatch.setattr(ar.gen_broll, "generate", unavailable)
@@ -265,7 +264,7 @@ def test_unknown_completion_retries_once_but_no_free_gaps_is_a_complete_result(
     render_project: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture-key")
-    monkeypatch.setattr(sb.source_discovery, "discover_web", lambda *_: [])
+    monkeypatch.setattr(source_discovery, "discover_web", lambda *_: [])
     ar.apply_remotion(render_project)
     (render_project / sb.REVIEW).write_text("broken JSON")
     calls = []
@@ -292,8 +291,8 @@ def test_an_x_retry_reuses_completed_web_search_including_empty_results(
         tweet_calls.append(True)
         raise RuntimeError("Grok CLI temporarily unavailable")
 
-    monkeypatch.setattr(sb.source_discovery, "discover_web", lambda *_: web_calls.append(True) or [])
-    monkeypatch.setattr(sb.source_discovery, "discover_tweets", tweets)
+    monkeypatch.setattr(source_discovery, "discover_web", lambda *_: web_calls.append(True) or [])
+    monkeypatch.setattr(source_discovery, "discover_tweets", tweets)
     transcript = words("The payment experiment begins")
     sb.generate(tmp_path, transcript, [(1, 8)])
     assert sb.should_retry(tmp_path, {"press", "tweets"})
@@ -320,8 +319,8 @@ def test_completed_search_preserves_candidates_and_is_bound_to_stage_kinds(
     def tweets(*_args: object) -> list:
         raise RuntimeError("X temporarily unavailable")
 
-    monkeypatch.setattr(sb.source_discovery, "discover_web", discover)
-    monkeypatch.setattr(sb.source_discovery, "discover_tweets", tweets)
+    monkeypatch.setattr(source_discovery, "discover_web", discover)
+    monkeypatch.setattr(source_discovery, "discover_tweets", tweets)
     official(monkeypatch)
     transcript = words("Ripple announced payments")
     assert sb.generate(tmp_path, transcript, [(40, 60)]) == []

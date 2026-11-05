@@ -32,11 +32,10 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
+from shortsmith._files import atomic_write
+from shortsmith._process import resolve_executable
 from shortsmith.config import SFX_DIR
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-                    datefmt="%H:%M:%S")
 log = logging.getLogger("sfx_index")
 
 AUDIO_EXTS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"}
@@ -155,7 +154,7 @@ def ffprobe_stats(p: Path) -> dict | None:
     """Return {duration, sample_rate, channels} or None on failure."""
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries",
+            [resolve_executable("ffprobe"), "-v", "error", "-show_entries",
              "stream=duration,sample_rate,channels", "-of", "json", str(p)],
             capture_output=True, text=True, encoding="utf-8", check=True,
         )
@@ -174,10 +173,10 @@ def ffprobe_stats(p: Path) -> dict | None:
         return None
 
 
-def measure_levels(p: Path) -> dict:
+def measure_levels(p: Path) -> dict[str, float | None]:
     """Return {peak_dbfs, mean_dbfs} via ffmpeg volumedetect."""
     out = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-i", str(p), "-af", "volumedetect", "-f", "null", "-"],
+        [resolve_executable("ffmpeg"), "-hide_banner", "-i", str(p), "-af", "volumedetect", "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8",
     )
     peak = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB", out.stderr)
@@ -319,10 +318,14 @@ def write_catalog_md(index: dict, dst: Path) -> None:
             )
         lines.append("")
 
-    dst.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(dst, "\n".join(lines))
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+                        datefmt="%H:%M:%S")
+
     if not SFX_DIR.exists():
         log.error("SFX_DIR does not exist: %s", SFX_DIR)
         return 1
@@ -339,7 +342,7 @@ def main() -> int:
     try:
         from shortsmith.config import REPO_ROOT
         root_str = sfx_root.relative_to(REPO_ROOT).as_posix()
-    except Exception:
+    except ValueError:
         root_str = sfx_root.name
 
     index = {
@@ -352,8 +355,7 @@ def main() -> int:
     }
 
     index_path = sfx_root / "index.json"
-    index_path.write_text(json.dumps(index, indent=2, ensure_ascii=False),
-                          encoding="utf-8")
+    atomic_write(index_path, json.dumps(index, indent=2, ensure_ascii=False))
     log.info("wrote %s (%d files)", index_path, len(files))
 
     catalog_path = sfx_root / "CATALOG.md"

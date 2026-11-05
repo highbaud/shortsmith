@@ -24,12 +24,16 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ._process import resolve_executable
 from .config import SFX_DIR, Config
+from .records import ClipCallout, ClipSpec, TranscriptWord
 
 log = logging.getLogger(__name__)
 
@@ -59,15 +63,20 @@ def load_sfx_map(sfx_dir: Path = SFX_DIR) -> dict[str, list[Path]]:
     if manifest.exists():
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Expected an object mapping slots to lists of file names")
             out: dict[str, list[Path]] = {}
             for slot, files in data.items():
-                paths = [pack_dir / f for f in files if (pack_dir / f).exists()]
+                if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+                    log.warning("Ignoring invalid SFX slot %r in %s", slot, manifest)
+                    continue
+                paths = [pack_dir / f for f in files if (pack_dir / f).is_file()]
                 if paths:
                     out[slot] = paths
             if out:
                 return out
-        except (json.JSONDecodeError, OSError):
-            pass
+        except (ValueError, OSError) as exc:
+            log.warning("Could not load SFX pack %s: %s; using slot files", manifest, exc)
 
     # Fallback: slot-named files directly in sfx_dir.
     out = {}
@@ -82,41 +91,81 @@ def load_sfx_map(sfx_dir: Path = SFX_DIR) -> dict[str, list[Path]]:
     return out
 
 
-def _norm_word(w: dict) -> str:
+def _norm_word(w: TranscriptWord) -> str:
     return (w.get("text") or w.get("word") or "").strip().lower().rstrip(".,!?:;\"')")
 
 
-def plan_events(clip: dict, words: list[dict], sfx_map: dict[str, list[Path]],
+def is_bigstat_callout(callout: ClipCallout) -> bool:
+    """A number card uses the same entrance cue for sound and visuals."""
+    return (str(callout.get("style") or "").lower() == "bigstat"
+            and _NUMBER_RE.search(str(callout.get("text", ""))) is not None)
+
+
+def semantic_word_cues(words: Sequence[TranscriptWord], cfg: Config,
+                       clip_duration: float) -> list[tuple[float, str]]:
+    """Return shared money and negative-word cues within the clip."""
+    mode = (cfg.sfx_semantic_mode or "sparing").lower()
+    if mode == "off":
+        return []
+    money = {word.lower() for word in cfg.money_keywords}
+    negatives = {word.lower() for word in cfg.negative_keywords}
+    cues: list[tuple[float, str]] = []
+    fired: set[str] = set()
+    for word in words:
+        stem = _norm_word(word)
+        slots = []
+        if stem in money or "$" in stem or re.fullmatch(r"\d+[km]?", stem):
+            slots.append("cash-register")
+        if stem in negatives:
+            slots.append("wrong-answer")
+        if not slots:
+            continue
+        time = float(word.get("start", 0.0))
+        if not math.isfinite(time) or not 0.0 <= time <= clip_duration:
+            continue
+        for slot in slots:
+            if mode != "sparing" or slot not in fired:
+                cues.append((time, slot))
+                fired.add(slot)
+    return cues
+
+
+def plan_events(clip: ClipSpec, words: Sequence[TranscriptWord], sfx_map: dict[str, list[Path]],
                 cfg: Config, clip_duration: float) -> list[SfxEvent]:
     """Compute the ordered SFX events for one clip (no file I/O)."""
     events: list[SfxEvent] = []
     have = sfx_map.__contains__
-    slot_gain = getattr(cfg, "sfx_slot_gain", {}) or {}
+    slot_gain = cfg.sfx_slot_gain or {}
 
     def g(slot: str) -> float:
         return float(slot_gain.get(slot, 1.0))
 
     # --- Hook impact ---
-    if have("hook-impact") and clip.get("hook") and str(clip["hook"].get("text", "")).strip():
+    hook = clip.get("hook")
+    if have("hook-impact") and isinstance(hook, dict) and str(hook.get("text", "")).strip():
         events.append(SfxEvent(0.05, "hook-impact", g("hook-impact")))
 
     # --- Callout swipes + bigstat dings ---
     callouts = clip.get("callouts") or []
-    semantic_on = (getattr(cfg, "sfx_semantic_mode", "sparing") or "sparing").lower() != "off"
-    swipe_out_on = bool(getattr(cfg, "sfx_swipe_out", False))
+    semantic_on = (cfg.sfx_semantic_mode or "sparing").lower() != "off"
+    swipe_out_on = bool(cfg.sfx_swipe_out)
     for co in callouts:
+        if not isinstance(co, dict):
+            log.warning("Skipping SFX callout: expected an object")
+            continue
         try:
             ls = float(co["local_start"])
             dur = float(co.get("duration", 2.0))
-        except (KeyError, ValueError, TypeError):
+            if not math.isfinite(ls) or not math.isfinite(dur):
+                raise ValueError("callout timing must be finite")
+        except (KeyError, ValueError, TypeError) as exc:
+            log.warning("Skipping SFX callout with invalid timing: %s", exc)
             continue
         ls = max(0.0, min(ls, clip_duration))
         # A bigstat number callout gets a ding as ITS entrance accent — so we
         # skip the swipe-in for that one (otherwise swipe + ding stack and
         # sound cluttered). Regular callouts get the swipe.
-        is_ding = (semantic_on and have("ding")
-                   and (co.get("style") or "").lower() == "bigstat"
-                   and _NUMBER_RE.search(str(co.get("text", ""))))
+        is_ding = semantic_on and have("ding") and is_bigstat_callout(co)
         if is_ding:
             events.append(SfxEvent(ls, "ding", g("ding")))
         elif have("swipe-in"):
@@ -124,41 +173,9 @@ def plan_events(clip: dict, words: list[dict], sfx_map: dict[str, list[Path]],
         if swipe_out_on and have("swipe-out"):
             events.append(SfxEvent(min(ls + dur, clip_duration), "swipe-out", g("swipe-out")))
 
-    # --- Money mention -> cash register ---
-    if semantic_on and have("cash-register") and words:
-        money = {m.lower() for m in getattr(cfg, "money_keywords", [])}
-        mode = (getattr(cfg, "sfx_semantic_mode", "sparing") or "sparing").lower()
-        for w in words:
-            stem = _norm_word(w)
-            is_money = stem in money or _NUMBER_RE.search(stem) is not None and "$" in stem
-            # also catch "$1.30", "$293", "30k" etc.
-            if not is_money and ("$" in stem or re.fullmatch(r"\d+[km]?", stem)):
-                is_money = True
-            if is_money:
-                t = float(w.get("start", 0.0))
-                if 0.0 <= t <= clip_duration:
-                    events.append(SfxEvent(t, "cash-register", g("cash-register")))
-                    if mode == "sparing":
-                        break  # only the first money mention
-
-    # --- Negative outcome -> wrong-answer ---
-    # Fires on the first (or every, depending on mode) negative-outcome word in
-    # the speech. Examples: "crashed", "scammed", "rugged", "bankrupt",
-    # "wrong". A sparring/quiz-show "err" cue that says "the bad thing
-    # happened" — opt-in by populating negative_keywords + dropping
-    # wrong-answer files into the pack.
-    if semantic_on and have("wrong-answer") and words:
-        negatives = {m.lower() for m in getattr(cfg, "negative_keywords", [])}
-        mode = (getattr(cfg, "sfx_semantic_mode", "sparing") or "sparing").lower()
-        if negatives:
-            for w in words:
-                stem = _norm_word(w)
-                if stem in negatives:
-                    t = float(w.get("start", 0.0))
-                    if 0.0 <= t <= clip_duration:
-                        events.append(SfxEvent(t, "wrong-answer", g("wrong-answer")))
-                        if mode == "sparing":
-                            break  # only the first negative word
+    for time, slot in semantic_word_cues(words, cfg, clip_duration):
+        if have(slot):
+            events.append(SfxEvent(time, slot, g(slot)))
 
     # De-dup near-identical (same slot within 80ms) and sort by time.
     events.sort(key=lambda e: (e.t, e.slot))
@@ -180,13 +197,13 @@ def apply_sfx(final_mp4: Path, events: list[SfxEvent], sfx_map: dict[str, list[P
     """
     if not events:
         # Nothing to add — still produce out_mp4 so callers have a uniform path.
-        subprocess.run(["ffmpeg", "-y", "-i", str(final_mp4), "-c", "copy",
+        subprocess.run([resolve_executable("ffmpeg"), "-y", "-i", str(final_mp4), "-c", "copy",
                         "-movflags", "+faststart", str(out_mp4)],
                        check=True, capture_output=True)
         return True
 
-    gain = float(getattr(cfg, "sfx_gain", 0.7))
-    limit = float(getattr(cfg, "sfx_limit", 0.97))
+    gain = float(cfg.sfx_gain)
+    limit = float(cfg.sfx_limit)
 
     inputs = ["-i", str(final_mp4)]
     filters = []
@@ -210,7 +227,7 @@ def apply_sfx(final_mp4: Path, events: list[SfxEvent], sfx_map: dict[str, list[P
     n = in_idx + 1  # base + number of SFX actually added
     if n == 1:
         # No usable SFX inputs — copy through.
-        subprocess.run(["ffmpeg", "-y", "-i", str(final_mp4), "-c", "copy",
+        subprocess.run([resolve_executable("ffmpeg"), "-y", "-i", str(final_mp4), "-c", "copy",
                         "-movflags", "+faststart", str(out_mp4)],
                        check=True, capture_output=True)
         return True
@@ -222,7 +239,7 @@ def apply_sfx(final_mp4: Path, events: list[SfxEvent], sfx_map: dict[str, list[P
     filter_complex = ";".join(filters + [mix])
 
     cmd = [
-        "ffmpeg", "-y", *inputs,
+        resolve_executable("ffmpeg"), "-y", *inputs,
         "-filter_complex", filter_complex,
         "-map", "0:v", "-map", "[aout]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",

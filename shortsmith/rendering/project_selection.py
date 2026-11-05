@@ -1,4 +1,5 @@
 """Select current short projects without reviving older or held picks."""
+
 from __future__ import annotations
 
 import json
@@ -35,8 +36,13 @@ def select_projects(source_dir: Path, work_root: Path) -> list[Path]:
         candidates = [p for p in projects if p.name.startswith(f"short-{rank:02d}-")]
         slug = clip.get("slug")
         if slug is not None:
-            if (not isinstance(slug, str) or not slug or slug != slug.strip()
-                    or slug in (".", "..") or any(c in '<>:"/\\|?*' or ord(c) < 32 for c in slug)):
+            if (
+                not isinstance(slug, str)
+                or not slug
+                or slug != slug.strip()
+                or slug in (".", "..")
+                or any(c in '<>:"/\\|?*' or ord(c) < 32 for c in slug)
+            ):
                 raise ValueError(f"Invalid clip slug in {metadata}: {slug!r}")
             candidates = [p for p in candidates if p.name == f"short-{rank:02d}-{slug}"]
         elif len(candidates) > 1:

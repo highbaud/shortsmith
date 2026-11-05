@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import random
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -82,6 +83,21 @@ def test_fix_words_holds_its_invariants_over_random_word_lists() -> None:
 # ---------------------------------------------------------------------------
 # transcribe: reusing a sibling transcript
 # ---------------------------------------------------------------------------
+
+
+def test_whisper_segments_preserve_word_order_and_timestamp_precision():
+    segments = iter([
+        SimpleNamespace(words=None), SimpleNamespace(words=[]),
+        SimpleNamespace(words=[
+            SimpleNamespace(word=" first ", start=1.23456, end=1.87654),
+            SimpleNamespace(word="second", start=2.0001, end=2.4567),
+        ]),
+    ])
+    assert transcribe.segments_to_words(segments) == [
+        {"text": "first", "start": 1.235, "end": 1.877},
+        {"text": "second", "start": 2.0, "end": 2.457},
+    ]
+    assert list(segments) == []
 
 
 def test_reuse_picks_the_longest_matching_transcript_tag(tmp_path) -> None:
@@ -207,10 +223,9 @@ def test_a_hook_duration_that_is_not_a_number_falls_back_to_the_default(duration
 
 
 def test_accent_entries_that_are_not_strings_do_not_crash() -> None:
-    cfg = Config()
     out = scaffold._build_callouts(
         {"callouts": [{"local_start": 1, "text": "800 T", "accent": [800]}]},
-        1, 30.0, cfg,
+        1, 30.0,
     )
     assert 'class="em-gold"' in out[0]["html"]
 

@@ -8,10 +8,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import finalize  # noqa: E402
-import render_remotion  # noqa: E402
-import render_stamp  # noqa: E402
+from shortsmith.rendering import finalize, render_remotion, render_stamp
 
 
 @pytest.fixture
@@ -62,12 +59,13 @@ def test_disabled_cached_sources_do_not_reach_render_props(
     captured = []
 
     def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        if command[0] == "ffprobe":
+        if Path(command[0]).stem.lower() == "ffprobe":
             return subprocess.CompletedProcess(command, 0, stdout="5.0\n")
-        assert command[1:3] == ["remotion", "render"]
+        remotion = command.index("remotion")
+        assert command[remotion:remotion + 2] == ["remotion", "render"]
         props_path = next(arg.split("=", 1)[1] for arg in command if arg.startswith("--props="))
         captured.append(json.loads(Path(props_path).read_text(encoding="utf-8")))
-        Path(command[5]).write_bytes(b"render")
+        Path(command[remotion + 4]).write_bytes(b"render")
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(subprocess, "run", run)
@@ -118,7 +116,7 @@ def test_source_updates_never_consolidate_a_stale_sound_render(
     monkeypatch.setattr(finalize, "ALL_DIR", final_folder)
 
     def probe(command: list[str], **kwargs: object) -> subprocess.CompletedProcess:
-        assert command[0] == "ffprobe"
+        assert Path(command[0]).stem.lower() == "ffprobe"
         return subprocess.CompletedProcess(command, 0, stdout=json.dumps({"streams": [
             {"codec_type": "video", "width": 1080, "height": 1920},
             {"codec_type": "audio"}]}))

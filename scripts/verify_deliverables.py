@@ -25,6 +25,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from shortsmith._process import resolve_executable
 from shortsmith.config import AUTO_SHORTS_ROOT
 
 KIT_RENDERS = AUTO_SHORTS_ROOT.parent.parent / "renders"
@@ -37,7 +38,7 @@ def _probe(p: Path) -> tuple[bool, int, int, float]:
     """(has_audio, width, height, duration)."""
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries",
+            [resolve_executable("ffprobe"), "-v", "error", "-show_entries",
              "stream=codec_type,width,height:format=duration",
              "-of", "json", str(p)],
             check=True, capture_output=True, text=True, encoding="utf-8")

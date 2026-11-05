@@ -19,19 +19,31 @@ import json
 import logging
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import normalize
+from ._process import resolve_executable
 from .config import AUDIO_ENHANCE_PROJECT, Config
+from .records import ClipManifest
 
 log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _EnhancementJob:
+    manifest: ClipManifest
+    cleaned: Path
+    src_wav: Path
+    enh_wav: Path
+    out_video: Path
+
+
 def enhance_all(
-    clip_manifests: list[dict],
+    clip_manifests: list[ClipManifest],
     work_dir: Path,
     cfg: Config,
-) -> list[dict]:
+) -> list[ClipManifest]:
     """Enhance audio for every cleaned clip. Updates manifests with enhanced_path."""
     enhanced_dir = work_dir / "enhanced"
     enhanced_dir.mkdir(parents=True, exist_ok=True)
@@ -39,97 +51,101 @@ def enhance_all(
     tmp_dir.mkdir(parents=True, exist_ok=True)
 
     # Plan extractions
-    plan = []  # list of (rank, cleaned_video, src_wav, enh_wav, out_video)
+    jobs: list[_EnhancementJob] = []
     for m in clip_manifests:
         rank = m["rank"]
         cleaned = Path(m.get("cleaned_path") or m["raw_path"])
         out_video = enhanced_dir / f"short-{rank:02d}.mp4"
         src_wav = tmp_dir / f"short-{rank:02d}_src.wav"
         enh_wav = tmp_dir / f"short-{rank:02d}_enh.wav"
-        plan.append((rank, cleaned, src_wav, enh_wav, out_video))
+        jobs.append(_EnhancementJob(m, cleaned, src_wav, enh_wav, out_video))
 
     # 1. Extract all source WAVs at 48 kHz mono
-    for rank, cleaned, src_wav, _, _ in plan:
-        log.debug("Extract audio: short-%02d", rank)
+    for job in jobs:
+        log.debug("Extract audio: short-%02d", job.manifest["rank"])
         subprocess.run([
-            "ffmpeg", "-y",
-            "-i", str(cleaned),
+            resolve_executable("ffmpeg"), "-y",
+            "-i", str(job.cleaned),
             "-vn", "-ac", "1", "-ar", "48000",
-            str(src_wav),
+            str(job.src_wav),
         ], check=True, capture_output=True)
 
     # 2. Run primary engine in batch
+    for job in jobs:
+        job.enh_wav.unlink(missing_ok=True)
     engine = cfg.enhance_engine.lower()
-    enhanced_ranks: set[int] = set()
+    successful_indices: set[int] = set()
     if engine == "clearvoice":
         try:
-            enhanced_ranks = _run_clearvoice_batch(
-                [(p[2], p[3]) for p in plan], log_prefix="clearvoice"
+            successful_indices = _run_clearvoice_batch(
+                [(job.src_wav, job.enh_wav) for job in jobs], log_prefix="clearvoice"
             )
-            log.info("ClearerVoice enhanced %d/%d clips", len(enhanced_ranks), len(plan))
+            log.info("ClearerVoice enhanced %d/%d clips", len(successful_indices), len(jobs))
         except Exception as e:
             log.warning("ClearerVoice batch failed: %s. Falling back per-clip.", e)
 
     # 3. Fall back per-clip for any not yet enhanced
     fallback_engines = [e for e in ("voicefixer", "resemble", "deepfilter") if e != engine]
-    for rank, _cleaned, src_wav, enh_wav, _ in plan:
-        if enh_wav.exists():
+    for index, job in enumerate(jobs):
+        if index in successful_indices and job.enh_wav.is_file():
             continue
         for eng in [engine, *fallback_engines]:
+            if eng not in {"voicefixer", "resemble", "deepfilter"}:
+                continue
+            job.enh_wav.unlink(missing_ok=True)
             try:
                 if eng == "voicefixer":
-                    _run_voicefixer(src_wav, enh_wav)
+                    _run_voicefixer(job.src_wav, job.enh_wav)
                 elif eng == "resemble":
-                    _run_resemble(src_wav, enh_wav)
+                    _run_resemble(job.src_wav, job.enh_wav)
                 elif eng == "deepfilter":
-                    _run_deepfilter(src_wav, enh_wav)
-                else:
-                    continue
-                log.info("Fallback %s enhanced short-%02d", eng, rank)
+                    _run_deepfilter(job.src_wav, job.enh_wav)
+                if not job.enh_wav.is_file():
+                    raise RuntimeError(f"{eng} produced no output")
+                log.info("Fallback %s enhanced short-%02d", eng, job.manifest["rank"])
                 break
             except Exception as e:
-                log.warning("short-%02d fallback %s failed: %s", rank, eng, e)
-        if not enh_wav.exists():
-            log.warning("short-%02d: all engines failed; using original audio", rank)
-            shutil.copy(src_wav, enh_wav)
+                job.enh_wav.unlink(missing_ok=True)
+                log.warning("short-%02d fallback %s failed: %s", job.manifest["rank"], eng, e)
+        if not job.enh_wav.is_file():
+            log.warning("short-%02d: all engines failed; using original audio", job.manifest["rank"])
+            shutil.copy(job.src_wav, job.enh_wav)
 
     # 3.5 Loudness normalization (two-pass loudnorm) to a consistent LUFS.
-    if getattr(cfg, "loudness_enabled", True):
-        for rank, _cleaned, _src_wav, enh_wav, _ in plan:
-            norm_wav = enh_wav.with_name(enh_wav.stem + "_norm.wav")
-            ok = normalize.loudnorm_two_pass(enh_wav, norm_wav, cfg)
+    if cfg.loudness_enabled:
+        for job in jobs:
+            norm_wav = job.enh_wav.with_name(job.enh_wav.stem + "_norm.wav")
+            norm_wav.unlink(missing_ok=True)
+            ok = normalize.loudnorm_two_pass(job.enh_wav, norm_wav, cfg)
             if ok and norm_wav.exists():
                 # Replace enh_wav with the normalized version for muxing.
-                norm_wav.replace(enh_wav)
-                log.info("Normalized short-%02d to %.1f LUFS", rank, cfg.loudness_target_lufs)
+                norm_wav.replace(job.enh_wav)
+                log.info("Normalized short-%02d to %.1f LUFS", job.manifest["rank"], cfg.loudness_target_lufs)
             else:
                 norm_wav.unlink(missing_ok=True)
 
     # 4. Mux enhanced audio back over each cleaned video
-    for rank, cleaned, _src_wav, enh_wav, out_video in plan:
-        log.debug("Mux audio: short-%02d", rank)
+    for job in jobs:
+        log.debug("Mux audio: short-%02d", job.manifest["rank"])
         subprocess.run([
-            "ffmpeg", "-y",
-            "-i", str(cleaned),
-            "-i", str(enh_wav),
+            resolve_executable("ffmpeg"), "-y",
+            "-i", str(job.cleaned),
+            "-i", str(job.enh_wav),
             "-map", "0:v", "-map", "1:a",
             "-c:v", "copy",
             "-c:a", "aac", "-b:a", "192k",
             "-shortest",
             "-movflags", "+faststart",
-            str(out_video),
+            str(job.out_video),
         ], check=True, capture_output=True)
         # Update manifest
-        for m in clip_manifests:
-            if m["rank"] == rank:
-                m["enhanced_path"] = str(out_video)
-                break
+        job.manifest["enhanced_path"] = str(job.out_video)
 
     # Cleanup tmp wavs (keep the dir for inspection if anything failed)
     try:
-        for _rank, _, src_wav, enh_wav, _ in plan:
-            src_wav.unlink(missing_ok=True)
-            enh_wav.unlink(missing_ok=True)
+        for job in jobs:
+            job.src_wav.unlink(missing_ok=True)
+            job.enh_wav.unlink(missing_ok=True)
         tmp_dir.rmdir()
     except OSError:
         pass
@@ -140,8 +156,8 @@ def enhance_all(
 def _run_clearvoice_batch(jobs: list[tuple[Path, Path]], log_prefix: str = "cv") -> set[int]:
     """Invoke audio-enhance/enhance_batch.py with all jobs in one subprocess.
 
-    Returns the set of indices that succeeded (0-based, matching jobs order),
-    though callers care more about whether out_wav exists afterwards.
+    Returns the successful job indices (0-based, matching jobs order). Callers
+    require both a reported success and a current output file.
     """
     if not AUDIO_ENHANCE_PROJECT.exists():
         raise FileNotFoundError(f"audio-enhance project not found at {AUDIO_ENHANCE_PROJECT}")
@@ -154,7 +170,7 @@ def _run_clearvoice_batch(jobs: list[tuple[Path, Path]], log_prefix: str = "cv")
 
     proc = subprocess.Popen(
         [
-            "uv", "run",
+            resolve_executable("uv"), "run",
             "--project", str(AUDIO_ENHANCE_PROJECT),
             "python", str(enhance_batch_py),
         ],
@@ -164,7 +180,12 @@ def _run_clearvoice_batch(jobs: list[tuple[Path, Path]], log_prefix: str = "cv")
         text=True,
         encoding="utf-8",
     )
-    stdout, stderr = proc.communicate(input=payload, timeout=3600)
+    try:
+        stdout, stderr = proc.communicate(input=payload, timeout=3600)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise
 
     ok_indices: set[int] = set()
     by_path = {str(src): i for i, (src, _) in enumerate(jobs)}
@@ -214,8 +235,10 @@ def _run_resemble(src_wav: Path, out_wav: Path) -> None:
     tmp_out.mkdir(exist_ok=True)
     staged = tmp_in / src_wav.name
     shutil.copy(src_wav, staged)
+    for previous in tmp_out.glob(f"{src_wav.stem}*.wav"):
+        previous.unlink()
     subprocess.run([
-        "resemble-enhance", str(tmp_in), str(tmp_out),
+        resolve_executable("resemble-enhance"), str(tmp_in), str(tmp_out),
     ], check=True, capture_output=True)
     produced = list(tmp_out.glob(f"{src_wav.stem}*.wav"))
     if not produced:
@@ -228,8 +251,10 @@ def _run_resemble(src_wav: Path, out_wav: Path) -> None:
 def _run_deepfilter(src_wav: Path, out_wav: Path) -> None:
     tmp_out = src_wav.parent / "_df_out"
     tmp_out.mkdir(exist_ok=True)
+    for previous in tmp_out.glob(f"{src_wav.stem}*.wav"):
+        previous.unlink()
     subprocess.run([
-        "deepFilter", str(src_wav), "-o", str(tmp_out),
+        resolve_executable("deepFilter"), str(src_wav), "-o", str(tmp_out),
     ], check=True, capture_output=True)
     produced = list(tmp_out.glob(f"{src_wav.stem}*.wav"))
     if not produced:

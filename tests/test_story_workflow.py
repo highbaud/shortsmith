@@ -10,10 +10,10 @@ from types import SimpleNamespace
 import pytest
 from click.testing import CliRunner
 
-from scripts import finalize
 from shortsmith import config, cut_clips, find_clips, pipeline, story_review
 from shortsmith.config import Config
 from shortsmith.pipeline import cli
+from shortsmith.rendering import finalize
 
 
 @pytest.fixture
@@ -387,6 +387,6 @@ def test_run_opt_out_reaches_cutter_without_review_call(monkeypatch, tmp_path, w
     assert str(result.exception) == "Reached media boundary"
     assert len(requests) == 1
     assert len(media_calls) == 1
-    assert media_calls[0][0] == "ffmpeg"
+    assert Path(media_calls[0][0]).stem.lower() == "ffmpeg"
     assert len(json.loads((work / "clips.json").read_text())) == 3
     assert not (work / "story_review.json").exists()

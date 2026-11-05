@@ -23,18 +23,19 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Imported for its side effect of being importable, so the child process needs
-# the same two entries on sys.path that the pipeline scripts get at runtime.
+# The child imports the checkout's packages without exposing bare script names.
 CHILD = r"""
 import importlib, sys
 sys.path.insert(0, {root!r})
-sys.path.insert(0, {scripts!r})
 failed = []
 for mod in {mods!r}:
     try:
         importlib.import_module(mod)
     except BaseException as exc:          # noqa: BLE001 - report, do not mask
         failed.append(f"{{mod}}: {{type(exc).__name__}}: {{exc}}")
+for mod in {mods!r}:
+    if mod.startswith("scripts.") and mod.removeprefix("scripts.") in sys.modules:
+        failed.append(f"{{mod}} also loaded as a bare script module")
 if failed:
     print("\n".join(failed))
     sys.exit(1)
@@ -42,7 +43,7 @@ if failed:
 
 
 def _tracked_scripts() -> list[str]:
-    """Module names for tracked `scripts/*.py`, or [] when git cannot answer."""
+    """Module names for existing tracked scripts, or [] when git cannot answer."""
     try:
         out = subprocess.run(
             ["git", "ls-files", "scripts/*.py"],
@@ -53,7 +54,10 @@ def _tracked_scripts() -> list[str]:
         return []
     if out.returncode != 0:
         return []
-    return sorted(Path(line).stem for line in out.stdout.split() if line)
+    return sorted(
+        "scripts" if Path(line).stem == "__init__" else f"scripts.{Path(line).stem}"
+        for line in out.stdout.split() if line and (ROOT / line).is_file()
+    )
 
 
 def _package_modules() -> list[str]:
@@ -75,7 +79,7 @@ def test_every_shipped_module_imports() -> None:
     mods = _package_modules() + _tracked_scripts()
     assert len(mods) > 20, f"discovery found only {len(mods)} modules, expected the full tree"
 
-    code = CHILD.format(root=str(ROOT), scripts=str(ROOT / "scripts"), mods=mods)
+    code = CHILD.format(root=str(ROOT), mods=mods)
     proc = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True, text=True, encoding="utf-8", timeout=600,
@@ -90,7 +94,7 @@ def test_importing_a_module_has_no_side_effects() -> None:
     Tracked code must not, or a plain `import` mutates the checkout.
     """
     mods = _package_modules() + _tracked_scripts()
-    code = CHILD.format(root=str(ROOT), scripts=str(ROOT / "scripts"), mods=mods)
+    code = CHILD.format(root=str(ROOT), mods=mods)
     proc = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True, text=True, encoding="utf-8", timeout=600,

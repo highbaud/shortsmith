@@ -21,15 +21,17 @@ import shutil
 import sys
 from pathlib import Path
 
-from shortsmith import config, transcribe
+from shortsmith import config, names, transcribe
+from shortsmith._files import atomic_write
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-                    datefmt="%H:%M:%S")
 log = logging.getLogger("ingest")
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+                        datefmt="%H:%M:%S")
+
     if len(sys.argv) < 3:
         print("usage: ingest_premade.py <slug> <file1> [file2 ...]")
         return 1
@@ -63,14 +65,14 @@ def main() -> int:
         full_transcript.append({
             "rank": i,
             "source_file": src.name,
-            "text": " ".join(w.get("text", "") for w in words),
+            "text": " ".join(names.word_text(w) for w in words),
             "duration": words[-1]["end"] if words else 0.0,
         })
 
-    (work_dir / "cut_manifests.json").write_text(
-        json.dumps(manifests, indent=2, ensure_ascii=False), encoding="utf-8")
-    (work_dir / "_premade_transcripts.json").write_text(
-        json.dumps(full_transcript, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(work_dir / "cut_manifests.json",
+                 json.dumps(manifests, indent=2, ensure_ascii=False))
+    atomic_write(work_dir / "_premade_transcripts.json",
+                 json.dumps(full_transcript, indent=2, ensure_ascii=False))
     log.info("Ingested %d clips -> %s", len(manifests), work_dir)
     log.info("Next: author %s/clips.json, then scaffold + render + finalize", work_dir)
     return 0

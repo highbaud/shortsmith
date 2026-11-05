@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import gen_broll  # noqa: E402
-import render_stamp  # noqa: E402
+from shortsmith.rendering import broll_assets, render_stamp
 
 
 @pytest.fixture
@@ -30,9 +27,9 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
 
     people = tmp_path / "people"
     people.mkdir()
-    monkeypatch.setattr(gen_broll, "PEOPLE_DIR", people)
-    monkeypatch.setattr(gen_broll, "PEOPLE_MANIFEST", people / "people.json")
-    monkeypatch.setattr(gen_broll, "MANUAL_DIR", people / "manual")
+    monkeypatch.setattr(broll_assets, 'PEOPLE_DIR', people)
+    monkeypatch.setattr(broll_assets, 'PEOPLE_MANIFEST', people / "people.json")
+    monkeypatch.setattr(broll_assets, 'MANUAL_DIR', people / "manual")
 
     code = tmp_path / "code"
     code.mkdir()
@@ -89,6 +86,18 @@ def test_code_change_changes_the_stamp(project: dict) -> None:
     before = stamp(project)
     (project["code"] / "render.py").write_text("v2", encoding="utf-8")
     assert render_stamp.changed_inputs(before, stamp(project)) == ["code"]
+
+
+def test_nested_remotion_sources_invalidate_render_code(tmp_path: Path) -> None:
+    source = tmp_path / "remotion" / "src" / "broll" / "Card.tsx"
+    source.parent.mkdir(parents=True)
+    source.write_text("export const Card = 'old';", encoding="utf-8")
+    before = render_stamp.code_digest(tmp_path)
+
+    source.write_text("export const Card = 'new';", encoding="utf-8")
+
+    assert source in render_stamp.code_files(tmp_path)
+    assert render_stamp.code_digest(tmp_path) != before
 
 
 def test_new_base_render_changes_the_stamp(project: dict) -> None:

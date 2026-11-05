@@ -9,6 +9,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from ._process import resolve_executable
+
 
 def probe_duration(path: Path) -> float:
     """Container duration in seconds.
@@ -18,7 +20,7 @@ def probe_duration(path: Path) -> float:
     file surfaces instead of turning into a plausible-looking zero.
     """
     out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+        [resolve_executable("ffprobe"), "-v", "error", "-show_entries", "format=duration",
          "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
         check=True, capture_output=True, text=True, encoding="utf-8",
     )

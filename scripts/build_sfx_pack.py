@@ -20,11 +20,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from shortsmith._files import atomic_write
+from shortsmith._process import resolve_executable
 from shortsmith.config import SFX_DIR
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-                    datefmt="%H:%M:%S")
 log = logging.getLogger("build_sfx")
 
 TARGET_PEAK_DB = -9.0   # normalize every one-shot to this peak
@@ -133,16 +132,21 @@ CURATION: dict[str, list[tuple[str, str]]] = {
 
 def measure_peak_db(p: Path) -> float | None:
     out = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-i", str(p), "-af", "volumedetect", "-f", "null", "-"],
+        [resolve_executable("ffmpeg"), "-hide_banner", "-i", str(p), "-af", "volumedetect", "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8",
     )
+    if out.returncode != 0:
+        return None
     m = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB", out.stderr)
     return float(m.group(1)) if m else None
 
 
 def normalize_one(src: Path, dst: Path) -> bool:
     peak = measure_peak_db(src)
-    gain_db = (TARGET_PEAK_DB - peak) if peak is not None else 0.0
+    if peak is None:
+        log.error("Cannot measure peak for %s; sound was not added to the pack", src.name)
+        return False
+    gain_db = TARGET_PEAK_DB - peak
     # Trim leading silence, apply gain, standardize to 48k stereo.
     af = (
         "silenceremove=start_periods=1:start_threshold=-50dB:start_silence=0.01,"
@@ -150,7 +154,7 @@ def normalize_one(src: Path, dst: Path) -> bool:
         "aresample=48000"
     )
     proc = subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-i", str(src),
+        [resolve_executable("ffmpeg"), "-y", "-hide_banner", "-i", str(src),
          "-af", af, "-ac", "2", "-ar", "48000", str(dst)],
         capture_output=True, text=True, encoding="utf-8",
     )
@@ -161,6 +165,10 @@ def normalize_one(src: Path, dst: Path) -> bool:
 
 
 def main() -> int:
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+                        datefmt="%H:%M:%S")
+
     pack_dir = SFX_DIR / "pack"
     pack_dir.mkdir(parents=True, exist_ok=True)
 
@@ -180,8 +188,7 @@ def main() -> int:
         if outs:
             manifest[slot] = outs
 
-    (pack_dir / "pack.json").write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(pack_dir / "pack.json", json.dumps(manifest, indent=2, ensure_ascii=False))
     log.info("Wrote pack.json with slots: %s", ", ".join(manifest))
     if missing:
         log.warning("Raw files referenced but not found (skipped): %s", ", ".join(missing))

@@ -16,10 +16,10 @@ people, logos, captions, and sound effects keep their current behavior.
 
 ```powershell
 # Replace SOURCE_SLUG with the folder name of the source batch.
-uv run python scripts/finalize.py --slug SOURCE_SLUG --sources "places,images"
-uv run python scripts/finalize.py --slug SOURCE_SLUG --sources "press,tweets"
-uv run python scripts/finalize.py --slug SOURCE_SLUG --sources all
-uv run python scripts/finalize.py --slug SOURCE_SLUG --sources off
+uv run shortsmith-finalize --slug SOURCE_SLUG --sources "places,images"
+uv run shortsmith-finalize --slug SOURCE_SLUG --sources "press,tweets"
+uv run shortsmith-finalize --slug SOURCE_SLUG --sources all
+uv run shortsmith-finalize --slug SOURCE_SLUG --sources off
 ```
 
 The same flag works in `gen_broll.py`, `apply_remotion.py`, and
