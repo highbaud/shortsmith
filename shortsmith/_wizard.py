@@ -17,6 +17,8 @@ from pathlib import Path
 
 import click
 
+from ._files import atomic_write
+
 STYLE_OPTIONS = {
     "1": ("xrp-revolution",
           "Premium high-energy — gold/red/green, Anton display, slam hook, vignette + grain."),
@@ -115,9 +117,8 @@ def _persist_to_env(env_path: Path, kv: dict[str, str]) -> None:
             keys_seen.add(key)
         else:
             new_lines.append(line)
-    # Append any new keys not present
     for key in keys_to_set - keys_seen:
         new_lines.append(f"{key}={kv[key]}")
 
     env_path.parent.mkdir(parents=True, exist_ok=True)
-    env_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    atomic_write(env_path, "\n".join(new_lines) + "\n")

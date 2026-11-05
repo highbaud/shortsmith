@@ -14,7 +14,11 @@ final_remotion.mp4
 SFX overlay → final_sfx.mp4
 ```
 
-Driven by `scripts/apply_remotion.py` (per-project) or `scripts/finalize.py` Phase 0 (everything).
+Driven by `shortsmith/rendering/apply_remotion.py` (per-project) or `scripts/finalize.py` Phase 0 (everything).
+
+The reusable code lives in `shortsmith/rendering/`. The documented
+`scripts/apply_remotion.py`, `scripts/gen_broll.py`, and `scripts/render_remotion.py`
+paths remain main-only CLI launchers. Import Python helpers from the library.
 
 ## What the Remotion project does
 
@@ -26,7 +30,7 @@ The Remotion project at `remotion/` is a React/Remotion 4.0 composition that ren
 
 Output: `<project>/renders/final_remotion.mp4`.
 
-## B-roll engine (`scripts/gen_broll.py`)
+## B-roll engine (`shortsmith/rendering/gen_broll.py`)
 
 The b-roll picker reads the clip transcript and proposes cutaways that match what's being said. Two engines:
 
@@ -50,7 +54,7 @@ Every asset is **public-domain or CC-licensed** and downloaded into the project'
 
 Simple Icons is the primary source and is accurate (an audit of all 41 curated brands found zero wrong marks), but it only covers 27 of them, and vectorlogo.zone answers for just 2 more. The other 12 (BlackRock, JPMorgan, Vanguard, Berkshire, Anchorage, Starlink…) silently produced no slide at all.
 
-[`scripts/brand_logos.py`](../scripts/brand_logos.py) adds a verified middle tier, Wikidata's P154 "logo image", taking coverage to 34 of 41 with every mark verified. Guards, each of which caught a real wrong logo during the audit:
+[`shortsmith/rendering/brand_logos.py`](../shortsmith/rendering/brand_logos.py) adds a verified middle tier, Wikidata's P154 "logo image", taking coverage to 34 of 41 with every mark verified. Guards, each of which caught a real wrong logo during the audit:
 
 - The Simple Icons `<title>` is checked against the brand, so an upstream slug reassignment can't serve someone else's icon.
 - Wikidata labels match on a **word boundary**: "JPMorgan" → "JPMorgan Chase" is fine, "Quant" → "Quantico" (the TV series) is not, and neither is "XDC" → "XDCAM".
@@ -61,12 +65,12 @@ Simple Icons is the primary source and is accurate (an audit of all 41 curated b
 The remaining 7 have no verified mark anywhere and correctly render no slide.
 
 ```bash
-uv run python scripts/gen_broll.py --audit-brands
+uv run shortsmith-gen-broll --audit-brands
 ```
 
 #### Person photos are identity-verified
 
-Photos are **never** chosen by searching for a name. Searching Commons for "David Schwartz" returns a photo of Anna Schwartz, and `/wiki/David_Schwartz` is an American composer. Neither is Ripple's CTO. So [`scripts/person_photos.py`](../scripts/person_photos.py) resolves the name to a **Wikidata human entity** first (pinned QID where we have one, else `wbsearchentities` filtered to `P31=Q5` and scored against the slide's `role` hint), and only accepts images bound to that entity.
+Photos are **never** chosen by searching for a name. Searching Commons for "David Schwartz" returns a photo of Anna Schwartz, and `/wiki/David_Schwartz` is an American composer. Neither is Ripple's CTO. So [`shortsmith/rendering/person_photos.py`](../shortsmith/rendering/person_photos.py) resolves the name to a **Wikidata human entity** first (pinned QID where we have one, else `wbsearchentities` filtered to `P31=Q5` and scored against the slide's `role` hint), and only accepts images bound to that entity.
 
 Candidates are ranked to prefer the entity's designated portrait (P18) and solo shots, rejecting signatures, graves, plaques, logos and group photos. **If identity can't be established, the slide is dropped.** A missing cutaway is invisible. A stranger's face is not.
 
@@ -75,7 +79,7 @@ Verified photos are cached repo-wide in `assets/people/` (not per-short), so a p
 The renderer re-verifies too. `render_remotion._merge_broll` hands every auto person slide to `gen_broll.verify_person_slides()`, which resolves the name again (cache first, Wikidata otherwise) and rewrites `src` to the verified file, or drops the slide. Without this, a `broll.auto.json` written before verification existed kept pointing at its keyword-search photo, and a re-render baked it in again: the July 31 batch shipped Anna Schwartz as David Schwartz. Manual `broll.json` slides are not touched.
 
 ```bash
-uv run python scripts/gen_broll.py --audit-people
+uv run shortsmith-gen-broll --audit-people
 ```
 
 Prints the resolved identity and chosen photo for every curated person, with alternates. Run it after editing `PERSON_QIDS`. To force a specific Commons file for one person, add it to `PERSON_PHOTO_OVERRIDES`. `--fresh-photo` re-picks past the cache; `--photo-seed` makes the pick reproducible.
@@ -88,7 +92,7 @@ Captions and b-roll read the same corrected words. Whisper is prompted with the 
 
 ### When a short re-renders
 
-`apply_remotion` decides with a render stamp (`scripts/render_stamp.py`), not a file date. After a render it writes `renders/final_remotion.stamp.json`, a digest of every input: the base render, the clip spec, `words.json`, the manual `broll.json`, the photo state of each person the words name (manifest entry, cached file, manual file), the render code (`render_remotion.py`, `gen_broll.py`, the resolvers, the layout presets, `remotion/src/*`), and the style / platform / captions switches. Before the next render it recomputes the digest; a match skips, a mismatch re-renders and prints which inputs changed. A short with no stamp was rendered before stamps existed and keeps the old rule (newer than its base) until `--force-remotion`; `finalize` reports how many it left alone. A b-roll generation failure no longer passes in silence: it is printed with a `!!` prefix, the render proceeds with the previous list, and the phase summary counts it.
+`apply_remotion` decides with a render stamp (`shortsmith/rendering/render_stamp.py`), not a file date. After a render it writes `renders/final_remotion.stamp.json`, a digest of every input: the base render, the clip spec, `words.json`, the manual `broll.json`, the photo state of each person the words name (manifest entry, cached file, manual file), the render code (`render_remotion.py`, `gen_broll.py`, the resolvers, the layout presets, `remotion/src/*`), and the style / platform / captions switches. Before the next render it recomputes the digest; a match skips, a mismatch re-renders and prints which inputs changed. A short with no stamp was rendered before stamps existed and keeps the old rule (newer than its base) until `--force-remotion`; `finalize` reports how many it left alone. A b-roll generation failure no longer passes in silence: it is printed with a `!!` prefix, the render proceeds with the previous list, and the phase summary counts it.
 
 ### Network politeness
 
@@ -103,19 +107,19 @@ Public APIs get hit responsibly:
 
 ```bash
 # Dry-run: print proposed slides without downloading
-uv run python scripts/gen_broll.py path/to/short/
+uv run shortsmith-gen-broll path/to/short/
 
 # Force the heuristic engine (no API call)
-uv run python scripts/gen_broll.py path/to/short/ --heuristic
+uv run shortsmith-gen-broll path/to/short/ --heuristic
 
 # Use only the on-disk cache — no live network at all
-uv run python scripts/gen_broll.py path/to/short/ --offline
+uv run shortsmith-gen-broll path/to/short/ --offline
 
 # Bypass the cache — every URL re-fetches
-uv run python scripts/gen_broll.py path/to/short/ --no-cache
+uv run shortsmith-gen-broll path/to/short/ --no-cache
 
 # Reproducible photo picks
-uv run python scripts/gen_broll.py path/to/short/ --photo-seed 42
+uv run shortsmith-gen-broll path/to/short/ --photo-seed 42
 ```
 
 Or via env: `SHORTSMITH_BROLL_OFFLINE=1`, `SHORTSMITH_BROLL_NOCACHE=1`.
@@ -128,10 +132,10 @@ Writes `<project>/broll.auto.json`. This is **merged** with any hand-authored `<
 
 ```bash
 # Apply to one project
-uv run python scripts/apply_remotion.py path/to/auto-shorts/<source>/short-NN-<hook>/
+uv run shortsmith-apply-remotion path/to/auto-shorts/<source>/short-NN-<hook>/
 
 # Apply to everything (Phase 0 of finalize)
-uv run python scripts/finalize.py
+uv run shortsmith-finalize
 ```
 
 ## Skip Remotion entirely
@@ -139,7 +143,7 @@ uv run python scripts/finalize.py
 If you don't want captions / b-roll on a given run:
 
 ```bash
-uv run python scripts/finalize.py --skip-remotion
+uv run shortsmith-finalize --skip-remotion
 ```
 
 SFX (Phase 1) falls through to the Hyperframes base render. Consolidation (Phase 2) picks up whichever final exists.

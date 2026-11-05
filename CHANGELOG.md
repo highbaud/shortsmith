@@ -4,7 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [0.6.0] - Unreleased
 
+### Changed
+
+- HyperFrames CLI pin moved from 0.7.71 to 0.9.16. The scaffold template now declares
+  a local Bebas Neue `@font-face`, tweens blur without an overshooting ease, and centers
+  `.hero` with GSAP `yPercent`. Without these, 0.9 renders a narrower font, a flickering
+  hook and a low hero caption. Projects scaffolded earlier need a new scaffold first.
+- Dependencies updated to latest (2026-11-03): anthropic 2.4, numpy 2.5 (old `<2.3` cap
+  removed), OpenCV 5.0, librosa 1.0, python-slugify 9, Remotion 4.0.540, React 19,
+  TypeScript 7. PyAV is capped `<19` because faster-whisper 1.2.1 breaks on PyAV 19.
+- audio-enhance now installs CUDA torch 2.15 (cu132). Before, it ran ClearerVoice on CPU
+  torch. Python is now 3.11 only there.
+- whisperx-align keeps torch 2.8.0: WhisperX 3.8.6 needs it, and newer torch forces
+  WhisperX back to 3.7. Its other packages are updated.
+- Main venv CUDA torch stays on 2.11.0+cu128: CTranslate2 needs CUDA 12 libraries, and
+  this is the newest CUDA 12 build that supports RTX 50 GPUs.
+
 ### Fixed
+
+- Cut points no longer land inside speech in gapless transcripts. faster-whisper
+  stretches words across pauses (82% of measured pauses on a 69-minute podcast), so
+  the snapper cut on sound. Transcribe now trims each word off measured 10 ms
+  silence (new `word_pauses.py`, after editonny's precise_edges), and the snapper
+  ranks a real pause above a closer zero-gap word edge. On three past batches,
+  cuts at speech level went from 19 to 6, 13 to 6, and 0 to 0. Only new
+  transcripts get the fix; resumed work dirs keep their saved `transcript.json`.
+- Source capture retries the temp profile delete, so Chrome holding `chrome_debug.log`
+  on Windows no longer fails the capture.
+
+- Source capture bounds response bytes and image pixels before image decoding.
+- With story check off, cut and clean accept overlapping words and blank word text.
+- Resuming at step 3 with story check keeps the saved `clips.json` plan, even when
+  no clips pass. Only passing clips continue in that run; finalize keeps exports
+  that still belong to the saved plan.
 
 **Hardening pass before merge.** Six parallel reviews across the whole tree, each
 bug reproduced before it was fixed and pinned by a test that fails without the

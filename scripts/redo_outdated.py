@@ -2,32 +2,28 @@
 cut/clean/filler-list fix landed at FIX_CUTOFF_EPOCH.
 
 For each outdated work dir we:
-1. Move the existing cut_manifests.json aside (.bak) so --from-step 3
-   re-runs the cut step with the new boundary snap.
-2. Invoke `uv run shortsmith run <video> --from-step 3` — re-cut +
+1. Record a pending marker and move the old cut_manifests.json aside (.bak).
+2. Invoke `uv run shortsmith run <video> --from-step 3` to re-cut +
    re-clean + re-enhance + re-retranscribe + re-reframe + re-scaffold.
-3. Re-render every Hyperframes project under auto-shorts/<slug>/.
+3. Re-render current selected projects under auto-shorts/<slug>/.
+
+The pending marker keeps failed attempts eligible, even after the pipeline
+writes a new manifest. Clear it only after the pipeline and renders succeed.
 
 Use after batch_pipeline_new.py has finished, OR sequentially queued
 once that batch completes.
 """
 from __future__ import annotations
 
-import json
 import logging
 import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
 
-from shortsmith.config import AUTO_SHORTS_ROOT, HYPERFRAMES_SPEC, KIT_ROOT, VIDEO_DIR
+from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT, VIDEO_DIR
+from shortsmith.rendering.batch import load_picks, run_batch
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
-    datefmt="%H:%M:%S",
-)
 log = logging.getLogger("redo")
 
 SHORTSMITH_ROOT = Path(__file__).resolve().parent.parent
@@ -37,110 +33,58 @@ WORK_ROOT = SHORTSMITH_ROOT / "work"
 # filler-mauling, tight-silence-margin) code path. Bump if more fixes
 # land later.
 FIX_CUTOFF_EPOCH = 1780002924
+PENDING_MARKER = ".redo_outdated_pending"
 
 
-def find_source_video_for(work_dir: Path):
-    from slugify import slugify
-    for v in VIDEO_DIR.iterdir():
-        if not v.is_file() or v.suffix.lower() not in (".mp4", ".mkv", ".webm", ".mov"):
-            continue
-        slug = slugify(v.stem)[:60]
-        if slug == work_dir.name:
-            return v
-    return None
-
-
-def outdated_work_dirs() -> list[Path]:
-    """Work dirs whose cut_manifests.json predates the fix."""
+def outdated_work_dirs() -> tuple[list[Path], list[str]]:
+    """Work dirs with old manifests or an unfinished prior attempt."""
     out = []
+    failed = []
     for wd in sorted(WORK_ROOT.iterdir()):
         if not wd.is_dir():
             continue
+        pending = (wd / PENDING_MARKER).exists()
         cm = wd / "cut_manifests.json"
-        if not cm.exists():
+        if not pending and (not cm.exists() or cm.stat().st_mtime >= FIX_CUTOFF_EPOCH):
             continue
-        # Skip empty clips lists
-        clips_p = wd / "clips.json"
-        if clips_p.exists():
-            try:
-                clips = json.loads(clips_p.read_text(encoding="utf-8"))
-                if not isinstance(clips, list) or not clips:
-                    continue
-            except Exception:
-                pass
-        if cm.stat().st_mtime < FIX_CUTOFF_EPOCH:
+        clips_path = wd / "clips.json"
+        try:
+            clips = load_picks(clips_path)
+        except (OSError, ValueError) as exc:
+            log.error("Cannot load outdated state from %s: %s", clips_path, exc)
+            failed.append(wd.name)
+            continue
+        if clips:
             out.append(wd)
-    return out
+    return out, failed
 
 
 def archive_old_outputs(wd: Path) -> None:
-    """Move stale cut_manifests aside so --from-step 3 re-runs the cut step."""
+    """Move the stale manifest aside after the driver records pending work."""
     cm = wd / "cut_manifests.json"
-    if cm.exists():
+    if cm.exists() and cm.stat().st_mtime < FIX_CUTOFF_EPOCH:
         bak = wd / f"cut_manifests.json.bak.{int(time.time())}"
         shutil.move(str(cm), str(bak))
         log.debug("archived %s -> %s", cm.name, bak.name)
 
 
-def run_pipeline(video: Path) -> bool:
-    log.info("=== pipeline: %s ===", video.name)
-    cmd = ["uv", "run", "shortsmith", "run", str(video), "--from-step", "3"]
-    proc = subprocess.run(cmd, cwd=str(SHORTSMITH_ROOT), capture_output=True, text=True, encoding="utf-8")
-    if proc.returncode != 0:
-        log.error("FAIL pipeline %s\nstderr=%s", video.name, (proc.stderr or "")[-1500:])
-        return False
-    return True
-
-
-def render_project(project_dir: Path) -> bool:
-    rel = project_dir.relative_to(KIT_ROOT)
-    cmd_str = f'npx {HYPERFRAMES_SPEC} render "{rel.as_posix()}"'
-    proc = subprocess.run(cmd_str, cwd=str(KIT_ROOT), shell=True, capture_output=True, text=True, encoding="utf-8")
-    if proc.returncode != 0:
-        log.error("FAIL render %s exit=%d stderr=%s",
-                  project_dir.name, proc.returncode, (proc.stderr or "")[-500:])
-        return False
-    return True
-
-
 def main() -> int:
-    work_dirs = outdated_work_dirs()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    work_dirs, state_fail = outdated_work_dirs()
     log.info("Found %d outdated work dirs (cut_manifests < %d)",
              len(work_dirs), FIX_CUTOFF_EPOCH)
 
-    todo = []
-    for wd in work_dirs:
-        v = find_source_video_for(wd)
-        if v is None:
-            log.warning("No source video for %s", wd.name)
-            continue
-        todo.append((wd, v))
-    log.info("Resolved %d sources to re-process", len(todo))
-
-    pipeline_fail = []
-    render_fail = []
-    for i, (wd, v) in enumerate(todo, 1):
-        log.info("[%d/%d] %s", i, len(todo), v.name)
-        archive_old_outputs(wd)
-        t0 = time.time()
-        ok = run_pipeline(v)
-        log.info("[%d/%d] pipeline %.0fs ok=%s", i, len(todo), time.time() - t0, ok)
-        if not ok:
-            pipeline_fail.append(v.name)
-            continue
-
-        out_dir = AUTO_SHORTS_ROOT / wd.name
-        if not out_dir.exists():
-            log.warning("No auto-shorts output dir for %s", wd.name)
-            continue
-        projects = sorted(p for p in out_dir.glob("short-*") if p.is_dir())
-        log.info("[%d/%d] rendering %d projects", i, len(todo), len(projects))
-        for proj in projects:
-            t1 = time.time()
-            ok = render_project(proj)
-            log.info("  %s done in %.0fs ok=%s", proj.name[:50], time.time() - t1, ok)
-            if not ok:
-                render_fail.append(f"{wd.name}/{proj.name}")
+    pipeline_fail, render_fail, _done = run_batch(
+        work_dirs, video_dir=VIDEO_DIR, output_root=AUTO_SHORTS_ROOT, kit_root=KIT_ROOT,
+        project_root=SHORTSMITH_ROOT, from_step=3, logger=log,
+        before_pipeline=archive_old_outputs, pending_marker=PENDING_MARKER,
+    )
+    pipeline_fail = state_fail + pipeline_fail
 
     log.info("DONE. pipeline_fail=%d render_fail=%d", len(pipeline_fail), len(render_fail))
     return 0 if not (pipeline_fail or render_fail) else 1

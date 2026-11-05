@@ -9,13 +9,10 @@ the guard away later.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import brand_logos as bl  # noqa: E402
+from shortsmith.rendering import brand_logos as bl
 
 # Long enough to clear the module's minimum-payload floor, like a real mark.
 SVG = (b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><title>%s</title>'

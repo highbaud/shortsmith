@@ -7,17 +7,13 @@ short used to raise something no caller was catching and end the run.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import finalize  # noqa: E402
-import render_remotion as rr  # noqa: E402
-
-from shortsmith import layouts  # noqa: E402
+from shortsmith import layouts
+from shortsmith.rendering import finalize
+from shortsmith.rendering import render_remotion as rr
 
 
 @pytest.fixture
@@ -102,6 +98,7 @@ def library(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (proj / "renders").mkdir(parents=True)
     (proj / "renders" / "final_remotion.mp4").write_bytes(b"mp4")
     monkeypatch.setattr(finalize, "AUTO_SHORTS_ROOT", auto)
+    monkeypatch.setattr(finalize, "WORK_ROOT", tmp_path / "work")
     monkeypatch.setattr(finalize, "KIT_RENDERS", tmp_path / "renders")
     monkeypatch.setattr(finalize, "ALL_DIR", tmp_path / "renders" / "_all")
     monkeypatch.setattr(finalize, "_qa_streams", lambda p: (True, 1080, 1920))

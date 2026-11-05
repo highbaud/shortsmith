@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from shortsmith.config import Config
-from shortsmith.sfx import plan_events
+from shortsmith.sfx import load_sfx_map, plan_events
 
 # Pretend every slot has a file.
 FULL_MAP = {s: Path(f"{s}.wav") for s in
@@ -14,6 +16,42 @@ FULL_MAP = {s: Path(f"{s}.wav") for s in
 
 def _words(spec):
     return [{"text": t, "start": s, "end": e} for t, s, e in spec]
+
+
+@pytest.mark.parametrize("manifest_text", ["{", "[]", '{"swipe-in": "hit.wav"}'])
+def test_invalid_pack_uses_fallback_and_reports_the_problem(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, manifest_text: str,
+) -> None:
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "pack.json").write_text(manifest_text, encoding="utf-8")
+    fallback = tmp_path / "swipe-in.wav"
+    fallback.write_bytes(b"audio")
+
+    assert load_sfx_map(tmp_path) == {"swipe-in": [fallback]}
+    assert "pack.json" in caplog.text
+
+
+def test_pack_ignores_invalid_entries_and_directories(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    pack = tmp_path / "pack"
+    pack.mkdir()
+    (pack / "pack.json").write_text(
+        '{"swipe-in": ["hit.wav", "folder"], "ding": [42]}', encoding="utf-8",
+    )
+    hit = pack / "hit.wav"
+    hit.write_bytes(b"audio")
+    (pack / "folder").mkdir()
+
+    assert load_sfx_map(tmp_path) == {"swipe-in": [hit]}
+    assert "ding" in caplog.text
+
+
+def test_invalid_callout_timing_is_reported(caplog: pytest.LogCaptureFixture) -> None:
+    events = plan_events({"callouts": [{"local_start": "invalid"}]}, [], FULL_MAP, Config(), 30.0)
+    assert events == []
+    assert "callout" in caplog.text
 
 
 def test_hook_impact_at_start():
@@ -138,3 +176,45 @@ def test_missing_slots_are_skipped():
     words = _words([("million", 1.0, 1.5)])
     ev = plan_events(clip, words, partial, Config(), 30.0)
     assert {e.slot for e in ev} <= {"swipe-in"}
+
+
+@pytest.mark.parametrize("mode", ["sparing", "every", "off"])
+def test_sound_and_visual_word_cues_agree(mode):
+    from shortsmith.vfx import plan_vfx_events
+
+    cfg = Config(sfx_semantic_mode=mode, vfx_enabled=True)
+    cfg.vfx_triggers = {"cash-register": ["glare"], "wrong-answer": ["zoom-punch"]}
+    words = _words([
+        ("$1.30,", -1, -0.5), ("crashed,", -0.5, -0.1),
+        ("30k", 1, 1.5), ("million", 2, 2.5),
+        ("crashed,", 3, 3.5), ("scammed", 4, 4.5), ("$20", 11, 12),
+    ])
+    sounds = plan_events({}, words, FULL_MAP, cfg, 10)
+    visuals = plan_vfx_events({}, words, cfg, 10)
+    effects = {"cash-register": "glare", "wrong-answer": "zoom-punch"}
+    assert sorted((e.t, effects[e.slot]) for e in sounds) == [
+        (e.t, e.effect) for e in visuals
+    ]
+    expected = {"sparing": [1, 3], "every": [1, 2, 3, 4], "off": []}
+    assert [e.t for e in sounds] == expected[mode]
+
+
+def test_bad_hook_and_callout_leave_valid_sound_cues(caplog):
+    clip = {"hook": "manual hook", "callouts": [None, {
+        "local_start": 2, "text": "point", "style": "punch",
+    }]}
+    events = plan_events(clip, [], FULL_MAP, Config(), 10)
+    assert [(e.t, e.slot) for e in events] == [(2, "swipe-in")]
+    assert "expected an object" in caplog.text
+
+
+@pytest.mark.parametrize("time", [float("nan"), float("inf"), float("-inf")])
+def test_nonfinite_authored_cues_do_not_enter_sound_or_visual_plans(time, caplog):
+    from shortsmith.vfx import plan_vfx_events
+
+    clip = {"callouts": [{"local_start": time, "text": "$1M", "style": "bigstat"}]}
+    words = [{"text": "million", "start": time, "end": time}]
+    cfg = Config(vfx_enabled=True)
+    assert plan_events(clip, words, FULL_MAP, cfg, 10) == []
+    assert plan_vfx_events(clip, words, cfg, 10) == []
+    assert "timing must be finite" in caplog.text

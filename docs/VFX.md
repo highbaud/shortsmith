@@ -48,7 +48,7 @@ Same trigger taxonomy as the SFX system — VFX piggybacks on the same
 | Env var / config field | Default | Purpose |
 |---|---|---|
 | `SHORTSMITH_VFX` | `on` | `off` / `0` / `false` / `no` disables the entire VFX layer |
-| `SHORTSMITH_VFX_INTENSITY` | `1.0` | Global 0..1 multiplier on opacity + scale-bump |
+| `SHORTSMITH_VFX_INTENSITY` | `1.0` | Nonnegative finite multiplier on opacity and scale; values above 1 add emphasis |
 | `Config.vfx_triggers` | (table above) | `dict[slot -> list[effect_name]]` |
 | `Config.vfx_colors` | (table above) | `dict[slot -> hex color]` |
 
@@ -71,11 +71,13 @@ Pure Python lives in `shortsmith/vfx.py:plan_vfx_events()`. It reads the same
 `clip` spec (`hook`, `callouts`) and aligned `words.json` that drives SFX, so
 audio + visual punctuation always land on the same frame.
 
-The render path: `scripts/render_remotion.py` calls `plan_vfx_events()`,
+The render path: `shortsmith/rendering/render_remotion.py` calls `plan_vfx_events()`,
 serializes the list as `vfxEvents` in the Remotion props JSON, and the
 `<Short>` component reads it from `ShortProps` and renders one `<Sequence>`
 per glare/flash event plus a single `useZoomPunchScale(events)` hook that
 applies the scale bump to the base video container.
+
+`scripts/render_remotion.py` remains a main-only CLI launcher for the library renderer.
 
 ## Effect implementations
 
@@ -110,7 +112,7 @@ extra DOM node per active frame).
 ## Disabling for one clip
 
 ```bash
-SHORTSMITH_VFX=off uv run python scripts/apply_remotion.py path/to/short-NN-slug/
+SHORTSMITH_VFX=off uv run shortsmith-apply-remotion path/to/short-NN-slug/
 ```
 
 Or in code:

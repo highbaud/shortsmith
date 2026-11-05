@@ -15,6 +15,7 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 def main() -> int:
@@ -39,29 +40,27 @@ def main() -> int:
 
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # ClearVoice will write to out_dir/MossFormer2_SE_48K/<input_stem>.wav
-        # Use a unique temp dir per job to avoid name collisions.
-        tmp_dir = out_path.parent / f"_cv_tmp_{i}"
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            t1 = time.time()
-            cv(input_path=str(in_path), online_write=True, output_path=str(tmp_dir / out_path.name))
-            generated = tmp_dir / out_path.name / "MossFormer2_SE_48K" / in_path.name
-            if not generated.exists():
-                # Fallback: locate any .wav in the tmp_dir
-                hits = list(tmp_dir.rglob("*.wav"))
-                if not hits:
-                    print(json.dumps({"event": "fail", "in": str(in_path), "reason": "no_output"}), flush=True)
-                    continue
-                generated = hits[0]
-            shutil.move(str(generated), str(out_path))
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            elapsed = round(time.time() - t1, 1)
-            print(json.dumps({"event": "ok", "in": str(in_path), "out": str(out_path), "seconds": elapsed}), flush=True)
-        except Exception as e:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            print(json.dumps({"event": "fail", "in": str(in_path), "error": repr(e)}), flush=True)
+        # A fresh directory prevents interrupted provider output from satisfying a new job.
+        with TemporaryDirectory(
+            prefix=f"_cv_tmp_{i}_", dir=out_path.parent, ignore_cleanup_errors=True,
+        ) as scratch:
+            tmp_dir = Path(scratch)
+            try:
+                t1 = time.time()
+                cv(input_path=str(in_path), online_write=True, output_path=str(tmp_dir / out_path.name))
+                generated = tmp_dir / out_path.name / "MossFormer2_SE_48K" / in_path.name
+                if not generated.exists():
+                    # ClearVoice versions can use different output layouts.
+                    hits = list(tmp_dir.rglob("*.wav"))
+                    if not hits:
+                        print(json.dumps({"event": "fail", "in": str(in_path), "reason": "no_output"}), flush=True)
+                        continue
+                    generated = hits[0]
+                shutil.move(str(generated), str(out_path))
+                elapsed = round(time.time() - t1, 1)
+                print(json.dumps({"event": "ok", "in": str(in_path), "out": str(out_path), "seconds": elapsed}), flush=True)
+            except Exception as e:
+                print(json.dumps({"event": "fail", "in": str(in_path), "error": repr(e)}), flush=True)
 
     return 0
 

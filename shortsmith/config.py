@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import names
+from ._process import find_windows_path_file, resolve_executable
 
 # Repo root = parent of the shortsmith/ package directory.
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -64,6 +65,7 @@ TEMPLATE_REF          = Path(_template_override).expanduser().resolve() \
 AUDIO_ENHANCE_PROJECT = _resolve_path("SHORTSMITH_AUDIO_ENHANCE",   "audio-enhance")
 WHISPERX_ALIGN_PROJECT = _resolve_path("SHORTSMITH_WHISPERX_ALIGN", "whisperx-align")
 VIDEO_DIR             = _resolve_path("SHORTSMITH_VIDEO_DIR",       "videos")
+VIDEO_EXTENSIONS = frozenset({".mp4", ".mkv", ".webm", ".mov"})
 SFX_DIR               = _resolve_path("SHORTSMITH_SFX_DIR",        "assets/sfx")
 
 # --- Hyperframes CLI pin --------------------------------------------------- #
@@ -72,62 +74,84 @@ SFX_DIR               = _resolve_path("SHORTSMITH_SFX_DIR",        "assets/sfx")
 # The renders ARE the product, so the version is pinned here and every render
 # call site goes through hyperframes_cmd(). Bump deliberately, then re-render a
 # known short and compare before trusting a batch to it.
-HYPERFRAMES_VERSION = os.environ.get("SHORTSMITH_HYPERFRAMES_VERSION", "0.7.71")
+HYPERFRAMES_VERSION = os.environ.get("SHORTSMITH_HYPERFRAMES_VERSION", "0.9.16")
 # The npx package spec. Set SHORTSMITH_HYPERFRAMES_VERSION=latest to float off
 # the pin deliberately.
 HYPERFRAMES_SPEC = ("hyperframes" if HYPERFRAMES_VERSION in ("", "latest")
                     else f"hyperframes@{HYPERFRAMES_VERSION}")
 
 
+def npx_cmd(*args: str) -> list[str]:
+    """Build an npx command without Windows batch-file parsing."""
+    if sys.platform != "win32":
+        return ["npx", *args]
+    npm_root = find_windows_path_file("npx.cmd").parent
+    node = npm_root / "node.exe"
+    if not node.is_file():
+        node = Path(resolve_executable("node.exe"))
+    node = node.resolve()
+    if node.suffix.lower() not in {".exe", ".com"}:
+        raise ValueError(f"A native Windows executable is required: {node}")
+    npx_cli = npm_root / "node_modules" / "npm" / "bin" / "npx-cli.js"
+    if not npx_cli.is_file():
+        raise FileNotFoundError(f"npm's npx CLI was not found at {npx_cli}. Reinstall npm.")
+    # A .cmd file invokes cmd.exe even with shell=False, which expands %NAME%.
+    return [str(node), str(npx_cli), *args]
+
+
 def hyperframes_cmd(*args: str) -> list[str]:
-    """`npx hyperframes@<pin> …` as an argv list, for shell=False callers."""
-    npx = "npx.cmd" if sys.platform == "win32" else "npx"
-    return [npx, HYPERFRAMES_SPEC, *args]
+    """Build the pinned Hyperframes command."""
+    return npx_cmd(HYPERFRAMES_SPEC, *args)
 
 DEFAULT_FILLERS = [
     # Pure stammers — never content.
     "um", "uh", "uhm", "erm", "mm",
-    # Discourse fillers that are almost always filler in conversational
-    # podcast speech.
-    "you know",
     # NOT in this list (too often content words — chopping them sounds wrong):
     #   "like"        — verb, preposition, simile marker
     #   "basically"   — sometimes a real adverb
     #   "literally"   — sometimes a real adverb
     #   "sort of" / "kind of" — softeners but often meaningful
     #   "right?"      — tag question, often a real beat
+    #   "you know": content in questions such as "How do you know?"
 ]
 
 @dataclass
 class Config:
     # Whisper
-    whisper_model: str = os.environ.get("SHORTSMITH_WHISPER_MODEL", "large-v3")
-    whisper_device: str = os.environ.get("SHORTSMITH_WHISPER_DEVICE", "cuda")
-    whisper_compute_type: str = os.environ.get("SHORTSMITH_WHISPER_COMPUTE", "float16")
+    whisper_model: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_WHISPER_MODEL", "large-v3"))
+    whisper_device: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_WHISPER_DEVICE", "cuda"))
+    whisper_compute_type: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_WHISPER_COMPUTE", "float16"))
     # Glossary handed to Whisper as its prompt, so names come out spelled
     # right (shortsmith/names.py). Override with SHORTSMITH_WHISPER_PROMPT; set
     # it empty to send no prompt.
-    whisper_initial_prompt: str = os.environ.get("SHORTSMITH_WHISPER_PROMPT",
-                                                 names.initial_prompt())
+    whisper_initial_prompt: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_WHISPER_PROMPT",
+                                                 names.initial_prompt()))
 
     # Clip engine. "anthropic" (default, best quality, costs API credits) or
     # "ollama" (local OpenAI-compatible endpoint, free, experimental, requires
     # a running Ollama / LM Studio / vLLM server).
-    clip_engine: str = os.environ.get("SHORTSMITH_CLIP_ENGINE", "anthropic")
+    clip_engine: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_CLIP_ENGINE", "anthropic"))
+    # A second pass checks retained speech against omitted source context.
+    story_check: bool = field(default_factory=lambda: (
+        os.environ.get("SHORTSMITH_STORY_CHECK", "on").lower()
+        not in ("off", "0", "false", "no")
+    ))
 
     # Anthropic
-    anthropic_api_key: str = field(default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""))
-    claude_model: str = os.environ.get("SHORTSMITH_CLAUDE_MODEL", "claude-opus-4-7")
+    anthropic_api_key: str = field(
+        default_factory=lambda: os.environ.get("ANTHROPIC_API_KEY", ""), repr=False,
+    )
+    claude_model: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_CLAUDE_MODEL", "claude-opus-4-7"))
     # Output token budget for clip finding. A long stream can return 15-20 clips
     # each with a hook + callouts + a ~500-char caption, which blows past 8k and
     # truncates the JSON (trailing clips vanish or the whole parse fails). 32k
     # comfortably fits the largest realistic pick list on Opus 4.x.
-    clip_max_tokens: int = int(os.environ.get("SHORTSMITH_CLIP_MAX_TOKENS", "32000"))
+    clip_max_tokens: int = field(default_factory=lambda: int(os.environ.get("SHORTSMITH_CLIP_MAX_TOKENS", "32000")))
 
     # Local LLM (Ollama / LM Studio / vLLM — any OpenAI-compatible endpoint)
-    local_llm_url: str = os.environ.get("SHORTSMITH_LOCAL_LLM_URL", "http://localhost:11434/v1")
-    local_llm_model: str = os.environ.get("SHORTSMITH_LOCAL_LLM_MODEL", "llama3.1:70b")
-    local_llm_temperature: float = float(os.environ.get("SHORTSMITH_LOCAL_LLM_TEMP", "0.3"))
+    local_llm_url: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_LOCAL_LLM_URL", "http://localhost:11434/v1"))
+    local_llm_model: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_LOCAL_LLM_MODEL", "llama3.1:70b"))
+    local_llm_temperature: float = field(default_factory=lambda: float(os.environ.get("SHORTSMITH_LOCAL_LLM_TEMP", "0.3")))
 
     # Clip selection
     min_clip_seconds: float = 30.0
@@ -135,7 +159,7 @@ class Config:
     # Post-filter: drop any clip Claude returned with viral_score below this.
     # 7 = "would stake credibility on >100k views". Lower → more clips, lower
     # average quality. Higher → fewer clips, only the standouts.
-    min_viral_score: int = int(os.environ.get("SHORTSMITH_MIN_SCORE", "7"))
+    min_viral_score: int = field(default_factory=lambda: int(os.environ.get("SHORTSMITH_MIN_SCORE", "7")))
 
     # Boundary snapping
     boundary_snap_window: float = 0.6
@@ -168,7 +192,7 @@ class Config:
     # or clipped (too hot). -14 LUFS = the TikTok/Instagram/YouTube playback
     # normalization target for short-form vertical.
     loudness_enabled: bool = True
-    loudness_target_lufs: float = float(os.environ.get("SHORTSMITH_LUFS", "-14.0"))
+    loudness_target_lufs: float = field(default_factory=lambda: float(os.environ.get("SHORTSMITH_LUFS", "-14.0")))
     loudness_true_peak: float = -1.5       # dBTP ceiling — headroom for lossy re-encode
     loudness_range: float = 11.0           # target LRA
 
@@ -176,7 +200,7 @@ class Config:
     # word boundaries to ~20ms via wav2vec2 — tight captions + clean cut seams.
     # Runs in sibling uv project WHISPERX_ALIGN_PROJECT. Falls back to
     # "faster-whisper" (the in-process re-transcribe) if whisperx is unavailable.
-    align_engine: str = os.environ.get("SHORTSMITH_ALIGN", "whisperx")
+    align_engine: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_ALIGN", "whisperx"))
 
     # Sound effects (post-render overlay pass — scripts/add_sfx.py).
     # A curated, level-normalized pack lives in SFX_DIR/pack/ with a pack.json
@@ -188,7 +212,7 @@ class Config:
     sfx_swipe_out: bool = False       # also play a swipe when a callout LEAVES (denser)
     # Per-slot gain — swipes sit further under the voice than the money/stat
     # accents, which are meant to "pop". Multiplied by sfx_gain at mix time.
-    sfx_slot_gain: dict = field(default_factory=lambda: {
+    sfx_slot_gain: dict[str, float] = field(default_factory=lambda: {
         "swipe-in": 0.55,
         "swipe-out": 0.45,
         "hook-impact": 0.7,
@@ -200,7 +224,7 @@ class Config:
     # "sparing" = cash-register only on first money mention, ding only on
     # bigstat $ callouts, wrong-answer only on first negative word.
     # "every" = every match. "off" = structural swipes only.
-    sfx_semantic_mode: str = os.environ.get("SHORTSMITH_SFX_SEMANTIC", "sparing")
+    sfx_semantic_mode: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_SFX_SEMANTIC", "sparing"))
     money_keywords: list[str] = field(default_factory=lambda: [
         "money", "cash", "dollar", "dollars", "rich", "wealth", "wealthy",
         "thousand", "thousands", "million", "millions", "millionaire",
@@ -213,12 +237,12 @@ class Config:
     # full-frame color tint) — each fires on the same 4 high-impact slots
     # the audio SFX already uses, so audio + visual punctuation sync.
     # Wholesale disable via cfg.vfx_enabled = False (or SHORTSMITH_VFX=off).
-    vfx_enabled: bool = (os.environ.get("SHORTSMITH_VFX", "on").lower()
-                         not in ("off", "0", "false", "no"))
-    vfx_intensity: float = float(os.environ.get("SHORTSMITH_VFX_INTENSITY", "1.0"))
+    vfx_enabled: bool = (field(default_factory=lambda: os.environ.get("SHORTSMITH_VFX", "on").lower()
+                         not in ("off", "0", "false", "no")))
+    vfx_intensity: float = field(default_factory=lambda: float(os.environ.get("SHORTSMITH_VFX_INTENSITY", "1.0")))
     # Slot -> list of effect names. Default mapping is "sparing" (4 punchy
     # beats only — never on every callout). Override per-slot to taste.
-    vfx_triggers: dict = field(default_factory=lambda: {
+    vfx_triggers: dict[str, list[str]] = field(default_factory=lambda: {
         "hook-impact":  ["glare", "zoom-punch", "flash"],  # big slam
         "ding":         ["glare"],                          # gold accent
         "cash-register":["glare", "flash"],                 # gold money pop
@@ -226,7 +250,7 @@ class Config:
     })
     # Per-slot color tint (hex). Glare/flash use the tint as the gradient/
     # overlay color; zoom-punch ignores it (geometry-only effect).
-    vfx_colors: dict = field(default_factory=lambda: {
+    vfx_colors: dict[str, str] = field(default_factory=lambda: {
         "hook-impact":   "#ffffff",  # white
         "ding":          "#f5c842",  # gold (xrp-revolution primary)
         "cash-register": "#f5c842",  # gold
@@ -255,23 +279,22 @@ class Config:
     #   AUDIO_ENHANCE_PROJECT (default: <repo>/audio-enhance).
     # "voicefixer" = fallback (works out-of-the-box, lower quality).
     # "resemble" / "deepfilter" = legacy options, harder Windows install.
-    enhance_engine: str = os.environ.get("SHORTSMITH_ENHANCE", "clearvoice")
+    enhance_engine: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_ENHANCE", "clearvoice"))
 
     # Ambient punch-in interrupts (Remotion layer). A subtle ~1.0->1.045 scale
     # pulse on the base video during long talking-head stretches with no overlay,
     # b-roll, or VFX active — the cheapest retention lever (a visual change every
     # ~8-12s). Planned in the free gaps so it never collides with a hook/callout.
     # Disable with SHORTSMITH_PUNCH=off.
-    punch_interrupt_enabled: bool = (os.environ.get("SHORTSMITH_PUNCH", "on").lower()
-                                     not in ("off", "0", "false", "no"))
-    punch_interrupt_every: float = float(os.environ.get("SHORTSMITH_PUNCH_EVERY", "10.0"))
+    punch_interrupt_enabled: bool = (field(default_factory=lambda: os.environ.get("SHORTSMITH_PUNCH", "on").lower()
+                                     not in ("off", "0", "false", "no")))
+    punch_interrupt_every: float = field(default_factory=lambda: float(os.environ.get("SHORTSMITH_PUNCH_EVERY", "10.0")))
     punch_interrupt_min_gap: float = 6.0   # only place punches in dead gaps at least this long
     punch_interrupt_edge_margin: float = 1.5  # keep this clear of each gap's edges
 
     # Reframe
     yunet_model_path: Path = Path(__file__).parent.parent / "models" / "face_detection_yunet_2023mar.onnx"
     yunet_score_threshold: float = 0.7   # was 0.6 — bump to drop weak misfires
-    reframe_smooth_alpha: float = 0.1    # EMA alpha on face x/y (legacy; reframe v2 uses median)
     reframe_sample_every: int = 3        # was 5 — sample 10/sec at 30fps for IQR stats
     reframe_min_face_h: float = 180.0    # absolute floor for bbox height (logo/avatar reject)
     reframe_min_face_h_frac: float = 0.08  # relative floor: 8% of source height (auto-scales for 4K)
@@ -293,10 +316,10 @@ class Config:
     # Off by default: single-speaker output is unchanged. Override per run with
     # --cut-aware / SHORTSMITH_REFRAME_CUTAWARE, or per clip via clips.json
     # "multicam": true.
-    reframe_cut_aware: bool = (os.environ.get("SHORTSMITH_REFRAME_CUTAWARE", "off").lower()
-                               in ("1", "true", "on", "yes"))
-    reframe_scene_threshold: float = float(
-        os.environ.get("SHORTSMITH_SCENE_THRESHOLD", "0.30"))  # ffmpeg scene score for a cut
+    reframe_cut_aware: bool = (field(default_factory=lambda: os.environ.get("SHORTSMITH_REFRAME_CUTAWARE", "off").lower()
+                               in ("1", "true", "on", "yes")))
+    reframe_scene_threshold: float = field(default_factory=lambda: float(
+        os.environ.get("SHORTSMITH_SCENE_THRESHOLD", "0.30")))  # ffmpeg scene score for a cut
     reframe_min_shot_seconds: float = 0.4   # merge shorter shots into the previous one
 
     # Split-stack reframe (gallery view: BOTH speakers on screen at once, side
@@ -312,12 +335,12 @@ class Config:
     #   "auto": use it when a two-up gallery is detected, else static
     # Override per run with --layout / SHORTSMITH_REFRAME_LAYOUT, or per clip via
     # clips.json "layout": "split-stack".
-    reframe_layout: str = os.environ.get("SHORTSMITH_REFRAME_LAYOUT", "static").lower()
+    reframe_layout: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_REFRAME_LAYOUT", "static").lower())
     # Every geometry and styling decision for the stacked format lives in a saved
     # preset under templates/layouts/, so a format tuned on real footage can be
     # reused verbatim. Override per clip with clips.json "layout_preset".
-    split_stack_preset: str = os.environ.get(
-        "SHORTSMITH_LAYOUT_PRESET", "two-speaker-stack")
+    split_stack_preset: str = field(default_factory=lambda: os.environ.get(
+        "SHORTSMITH_LAYOUT_PRESET", "two-speaker-stack"))
 
     # Scaffold
     enable_captions: bool = False  # karaoke captions inclusion in index.html
@@ -325,7 +348,7 @@ class Config:
     # Visual style preset. Ships with: "xrp-revolution" (default),
     # "minimal", "bold". Each preset is a templates/styles/<name>/style.json
     # with colors, fonts, hook sizing, and overlay flags.
-    style: str = os.environ.get("SHORTSMITH_STYLE", "xrp-revolution")
+    style: str = field(default_factory=lambda: os.environ.get("SHORTSMITH_STYLE", "xrp-revolution"))
 
     # Captions
     phrase_gap_seconds: float = 0.45

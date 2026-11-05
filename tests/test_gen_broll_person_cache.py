@@ -5,20 +5,18 @@ staleness rules matter as much as the download itself.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import gen_broll  # noqa: E402
+from shortsmith.rendering import broll_assets
 
 
 @pytest.fixture
 def people_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    monkeypatch.setattr(gen_broll, "PEOPLE_DIR", tmp_path)
-    monkeypatch.setattr(gen_broll, "PEOPLE_MANIFEST", tmp_path / "people.json")
-    monkeypatch.setattr(gen_broll, "MANUAL_DIR", tmp_path / "manual")
+    monkeypatch.setattr(broll_assets, 'PEOPLE_DIR', tmp_path)
+    monkeypatch.setattr(broll_assets, 'PEOPLE_MANIFEST', tmp_path / "people.json")
+    monkeypatch.setattr(broll_assets, 'MANUAL_DIR', tmp_path / "manual")
     return tmp_path
 
 
@@ -35,15 +33,15 @@ def test_manual_photo_beats_wikidata_and_the_cache(
     manual = people_dir / "manual"
     manual.mkdir()
     (manual / "davidschwartz.jpg").write_bytes(b"operator-choice")
-    monkeypatch.setattr(gen_broll.person_photos, "resolve_photo_candidates", _never_resolve)
+    monkeypatch.setattr(broll_assets.person_photos, "resolve_photo_candidates", _never_resolve)
     out_dir = tmp_path / "short" / "assets" / "broll"
     out_dir.mkdir(parents=True)
 
     for fresh in (False, True):
-        src = gen_broll._download_person("David Schwartz", out_dir, fresh=fresh)
+        src = broll_assets._download_person("David Schwartz", out_dir, fresh=fresh)
         assert src == "assets/broll/person-davidschwartz.jpg"
         assert (out_dir / "person-davidschwartz.jpg").read_bytes() == b"operator-choice"
-    assert gen_broll._read_manifest()["David Schwartz"] == {
+    assert broll_assets._read_manifest()["David Schwartz"] == {
         "origin": "manual", "file": "manual/davidschwartz.jpg"}
 
 
@@ -53,7 +51,7 @@ def test_manual_photo_keeps_its_own_format(people_dir: Path, tmp_path: Path) -> 
     (manual / "jedmccaleb.png").write_bytes(b"png-bytes")
     out_dir = tmp_path / "broll"
     out_dir.mkdir()
-    assert gen_broll._download_person("Jed McCaleb", out_dir) == "assets/broll/person-jedmccaleb.png"
+    assert broll_assets._download_person("Jed McCaleb", out_dir) == "assets/broll/person-jedmccaleb.png"
 
 
 def test_manual_lookup_is_by_slug_and_ignores_non_images(people_dir: Path) -> None:
@@ -61,25 +59,25 @@ def test_manual_lookup_is_by_slug_and_ignores_non_images(people_dir: Path) -> No
     manual.mkdir()
     (manual / "michaelburry.txt").write_text("notes", encoding="utf-8")
     (manual / "michaelsaylor.jpg").write_bytes(b"x")
-    assert gen_broll._manual_person_photo("michaelburry") is None
-    assert gen_broll._manual_person_photo("michaelsaylor") is not None
-    assert gen_broll._manual_person_photo("nobody") is None
+    assert broll_assets._manual_person_photo("michaelburry") is None
+    assert broll_assets._manual_person_photo("michaelsaylor") is not None
+    assert broll_assets._manual_person_photo("nobody") is None
 
 
 def test_no_cached_photo_returns_none(people_dir: Path) -> None:
-    assert gen_broll._cached_person_photo("nobody") is None
+    assert broll_assets._cached_person_photo("nobody") is None
 
 
 def test_cached_photo_is_found_by_slug(people_dir: Path) -> None:
     (people_dir / "cathiewood.jpg").write_bytes(b"x")
-    found = gen_broll._cached_person_photo("cathiewood")
+    found = broll_assets._cached_person_photo("cathiewood")
     assert found is not None
     assert found.name == "cathiewood.jpg"
 
 
 def test_slug_lookup_does_not_match_a_different_person(people_dir: Path) -> None:
     (people_dir / "michaelsaylor.png").write_bytes(b"x")
-    assert gen_broll._cached_person_photo("michaelburry") is None
+    assert broll_assets._cached_person_photo("michaelburry") is None
 
 
 def test_regression_stale_extension_does_not_shadow_a_fresh_pick(
@@ -94,13 +92,13 @@ def test_regression_stale_extension_does_not_shadow_a_fresh_pick(
     (people_dir / "person.jpg").write_bytes(b"stale")
     fresh = people_dir / "person.png"
 
-    for stale in gen_broll._cached_person_photos("person"):
+    for stale in broll_assets._cached_person_photos("person"):
         if stale != fresh:
             stale.unlink(missing_ok=True)
     fresh.write_bytes(b"fresh")
 
     assert [p.name for p in people_dir.iterdir()] == ["person.png"]
-    assert gen_broll._cached_person_photo("person").read_bytes() == b"fresh"
+    assert broll_assets._cached_person_photo("person").read_bytes() == b"fresh"
 
 
 @pytest.mark.parametrize("hostile", [
@@ -115,19 +113,19 @@ def test_remote_filenames_can_never_reach_the_filesystem(hostile: str) -> None:
     Cache paths are composed from _slug(name) plus a whitelisted extension; the
     remote title only ever selects the extension. This pins that property.
     """
-    import wikidata
+    from shortsmith.rendering import wikidata
 
-    slug = gen_broll._slug(hostile)
+    slug = broll_assets._slug(hostile)
     assert slug.isalnum() or slug == ""
     assert "/" not in slug and "\\" not in slug and ".." not in slug
     assert wikidata.file_extension(hostile) in (".jpg", ".png", ".webp", ".svg")
 
 
 def test_manifest_round_trips(people_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(gen_broll, "PEOPLE_MANIFEST", people_dir / "people.json")
-    gen_broll._record_manifest("Cathie Wood", {"qid": "Q104587868"})
-    gen_broll._record_manifest("Elon Musk", {"qid": "Q317521"})
-    manifest = gen_broll._read_manifest()
+    monkeypatch.setattr(broll_assets, 'PEOPLE_MANIFEST', people_dir / "people.json")
+    broll_assets._record_manifest("Cathie Wood", {"qid": "Q104587868"})
+    broll_assets._record_manifest("Elon Musk", {"qid": "Q317521"})
+    manifest = broll_assets._read_manifest()
     assert manifest["Cathie Wood"]["qid"] == "Q104587868"
     assert list(manifest) == ["Cathie Wood", "Elon Musk"], "entries should stay sorted"
 
@@ -138,5 +136,19 @@ def test_unreadable_manifest_degrades_to_empty(
     """A corrupt audit trail must never break a render."""
     path = people_dir / "people.json"
     path.write_text("{ not json", encoding="utf-8")
-    monkeypatch.setattr(gen_broll, "PEOPLE_MANIFEST", path)
-    assert gen_broll._read_manifest() == {}
+    monkeypatch.setattr(broll_assets, 'PEOPLE_MANIFEST', path)
+    assert broll_assets._read_manifest() == {}
+
+
+def _png_header(width: int) -> bytes:
+    import struct
+
+    return b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + struct.pack(">II", width, 600)
+
+
+def test_downloaded_photo_must_meet_the_ranking_width_floor() -> None:
+    from shortsmith.rendering import person_photos
+
+    assert broll_assets._is_usable_photo(_png_header(person_photos.MIN_WIDTH))
+    assert not broll_assets._is_usable_photo(_png_header(person_photos.MIN_WIDTH - 1))
+    assert not broll_assets._is_usable_photo(b"<html>error</html>" * 1000)

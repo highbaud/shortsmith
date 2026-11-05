@@ -35,6 +35,8 @@ import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from shortsmith._files import atomic_write
+
 # Networks that require a video + per-network field shapes Metricool expects.
 _VIDEO_NETWORKS = {"facebook", "instagram", "tiktok", "youtube", "linkedin", "threads", "twitter"}
 
@@ -45,6 +47,16 @@ def _caption_first_line(text: str) -> str:
         if ln:
             return ln[:100]
     return ""
+
+
+def _read_metadata(path: Path) -> dict:
+    """Load the `<base>.json` that make_metadata.py writes; none or unreadable means {}."""
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def _network_data(networks: list[str], title: str, tags: list[str]) -> dict:
@@ -69,22 +81,14 @@ def _network_data(networks: list[str], title: str, tags: list[str]) -> dict:
 
 
 def _slots(start: date, per_day: int, times: list[str], count: int, tz: str):
-    """Yield (iso_datetime, {dateTime, timezone}) for `count` posts."""
+    """Return (iso_datetime, {dateTime, timezone}) for each of `count` posts."""
+    daily = times[:per_day]
     out = []
-    d = start
-    i = 0
-    while len(out) < count:
-        for t in times[:per_day]:
-            if len(out) >= count:
-                break
-            hh, mm = t.split(":")
-            dt = datetime(d.year, d.month, d.day, int(hh), int(mm))
-            iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
-            out.append((iso, {"dateTime": iso, "timezone": tz}))
-        d += timedelta(days=1)
-        i += 1
-        if i > 5000:  # safety
-            break
+    for i in range(count):
+        d = start + timedelta(days=i // len(daily))
+        hh, mm = daily[i % len(daily)].split(":")
+        iso = datetime(d.year, d.month, d.day, int(hh), int(mm)).strftime("%Y-%m-%dT%H:%M:%S")
+        out.append((iso, {"dateTime": iso, "timezone": tz}))
     return out
 
 
@@ -132,13 +136,7 @@ def main() -> int:
         if not media:
             continue  # only schedule clips that survived curation / have a URL
         caption = txt.read_text(encoding="utf-8").strip()
-        meta = {}
-        mj = args.all_dir / f"{base}.json"
-        if mj.exists():
-            try:
-                meta = json.loads(mj.read_text(encoding="utf-8"))
-            except Exception:
-                meta = {}
+        meta = _read_metadata(args.all_dir / f"{base}.json")
         items.append({
             "base": base,
             "media": media,
@@ -153,7 +151,7 @@ def main() -> int:
 
     slots = _slots(start, args.per_day, times, len(items), args.tz)
     payloads = []
-    for it, (iso, pub) in zip(items, slots, strict=False):
+    for it, (iso, pub) in zip(items, slots, strict=True):
         info = {
             "autoPublish": True, "draft": False,
             "text": it["caption"],
@@ -166,11 +164,9 @@ def main() -> int:
         payloads.append({"blogId": str(args.blog_id), "date": f"{iso}{_tz_offset_hint(args.tz)}",
                          "base": it["base"], "info": info})
 
-    args.out.write_text(json.dumps(payloads, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write(args.out, json.dumps(payloads, indent=2, ensure_ascii=False))
     print(f"Wrote {len(payloads)} payloads -> {args.out} "
           f"({args.per_day}/day from {args.start}, networks: {','.join(networks)})")
-    if len(items) > len(slots):
-        print(f"NOTE: {len(items) - len(slots)} shorts had no slot (raise the range).")
     return 0
 
 

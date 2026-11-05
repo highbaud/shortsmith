@@ -6,6 +6,8 @@ layer reads. Pure logic — no I/O, no Remotion required.
 """
 from __future__ import annotations
 
+import pytest
+
 from shortsmith.config import Config
 from shortsmith.vfx import VFXEvent, plan_vfx_events
 
@@ -28,6 +30,15 @@ def test_hook_fires_glare_zoom_flash():
     assert effects_at_hook == {"glare", "zoom-punch", "flash"}
     # White tint on hook
     assert all(e.color == "#ffffff" for e in ev if e.t < 0.2)
+
+
+@pytest.mark.parametrize("hook", [None, "manual hook", [], 5, False])
+def test_invalid_hook_keeps_other_visual_cues(hook):
+    clip = {"hook": hook, "callouts": [
+        {"local_start": 5.0, "text": "$1M", "style": "bigstat"},
+    ]}
+    events = plan_vfx_events(clip, [], Config(vfx_enabled=True), 10.0)
+    assert [(event.t, event.effect) for event in events] == [(5.0, "glare")]
 
 
 def test_bigstat_fires_glare_only_by_default():

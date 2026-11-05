@@ -2,14 +2,10 @@
 about must not win on an exact label match."""
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
+from test_person_photos import entity, make_fetch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import person_photos as pp  # noqa: E402
-from test_person_photos import entity, make_fetch  # noqa: E402
+from shortsmith.rendering import person_photos as pp
 
 
 def with_links(e: dict, n: int) -> dict:

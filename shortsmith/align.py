@@ -18,26 +18,28 @@ import os
 import subprocess
 from pathlib import Path
 
-from . import names, transcribe
+from . import names, story_review, transcribe
+from ._files import atomic_write
+from ._process import resolve_executable
 from .config import WHISPERX_ALIGN_PROJECT, Config
+from .records import ClipManifest, TranscriptWord, current_media
 
 log = logging.getLogger(__name__)
 
 
-def align_all(manifests: list[dict], cfg: Config) -> list[dict]:
+def align_all(manifests: list[ClipManifest], cfg: Config) -> list[ClipManifest]:
     """Produce a `.words.json` next to each clip; set m['words_path']."""
     # Build the job list (clip mp4 -> sibling words.json).
-    jobs: list[tuple[dict, Path, Path]] = []
+    jobs: list[tuple[ClipManifest, Path, Path]] = []
     for m in manifests:
         # Same fallback chain as every other step: resuming with --from-step 6
         # loads manifests that step 4 and step 5 never touched, so the only
         # path on them is the raw cut.
-        clip_path = Path(m.get("enhanced_path") or m.get("cleaned_path")
-                         or m["raw_path"])
+        clip_path = current_media(m)
         words_out = clip_path.with_suffix(".words.json")
         jobs.append((m, clip_path, words_out))
 
-    engine = (getattr(cfg, "align_engine", "whisperx") or "whisperx").lower()
+    engine = (cfg.align_engine or "whisperx").lower()
     done_whisperx: set[str] = set()
 
     if engine == "whisperx":
@@ -54,30 +56,35 @@ def align_all(manifests: list[dict], cfg: Config) -> list[dict]:
 
     # Fallback per clip for anything whisperx didn't produce.
     for m, clip_path, words_out in jobs:
+        valid_words = words_out.exists() and _valid_alignment(words_out)
         # Fresh whisperx output from THIS run.
-        if str(clip_path) in done_whisperx and words_out.exists():
+        if str(clip_path) in done_whisperx and valid_words:
             m["words_path"] = str(words_out)
+            m.pop("alignment_failed", None)
             continue
         # Crash-recovery reuse: an existing alignment is only valid if it's
         # NEWER than the clip mp4. Step 5 rewrites the clip on every
         # re-process, so a stale words.json (older than the clip) must be
         # regenerated — otherwise captions drift against re-cut audio.
-        if (words_out.exists() and words_out.stat().st_size > 2
+        if (valid_words and not m.get("alignment_failed") and words_out.stat().st_size > 2
                 and clip_path.exists()
                 and words_out.stat().st_mtime >= clip_path.stat().st_mtime):
             m["words_path"] = str(words_out)
+            m.pop("alignment_failed", None)
             continue
         try:
             transcribe.transcribe(clip_path, words_out, cfg, reuse_existing=False)
             m["words_path"] = str(words_out)
+            m.pop("alignment_failed", None)
         except Exception as e:  # noqa: BLE001
             log.error(
                 "Alignment failed for %s via both whisperx and faster-whisper: %s. "
                 "Captions for this clip may be loosely timed.", clip_path.name, e,
             )
             # Last resort: empty word list so downstream steps don't crash.
-            words_out.write_text("[]", encoding="utf-8")
+            atomic_write(words_out, "[]")
             m["words_path"] = str(words_out)
+            m["alignment_failed"] = True
 
     # Respell known mishearings in every alignment, whichever engine produced
     # it, so a caption never shows "Sailor" for Saylor.
@@ -86,17 +93,30 @@ def align_all(manifests: list[dict], cfg: Config) -> list[dict]:
     return manifests
 
 
+def _valid_alignment(path: Path) -> bool:
+    try:
+        words = transcribe.load_words(path)
+        story_review.require_valid_timing(words, [])
+        for index, word in enumerate(words):
+            text = word.get("text") or word.get("word")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(f"aligned word {index} needs nonempty text or word")
+    except (OSError, ValueError) as exc:
+        log.warning("Ignoring invalid alignment %s: %s", path, exc)
+        return False
+    return True
+
+
 def _fix_names(words_path: Path) -> None:
     try:
-        words = json.loads(words_path.read_text(encoding="utf-8"))
+        words: list[TranscriptWord] = json.loads(words_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
     if not isinstance(words, list):
         return
     fixed = names.fix_words(words)
     if fixed != words:
-        words_path.write_text(json.dumps(fixed, indent=2, ensure_ascii=False),
-                              encoding="utf-8")
+        atomic_write(words_path, json.dumps(fixed, indent=2, ensure_ascii=False))
 
 
 def _run_whisperx_batch(jobs: list[tuple[Path, Path]], cfg: Config) -> set[str]:
@@ -115,7 +135,7 @@ def _run_whisperx_batch(jobs: list[tuple[Path, Path]], cfg: Config) -> set[str]:
 
     manifest = [{"in": str(src), "out": str(dst)} for src, dst in jobs]
     proc = subprocess.Popen(
-        ["uv", "run", "--project", str(WHISPERX_ALIGN_PROJECT), "python", str(align_batch_py)],
+        [resolve_executable("uv"), "run", "--project", str(WHISPERX_ALIGN_PROJECT), "python", str(align_batch_py)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8",
         env={**os.environ, "WHISPERX_INITIAL_PROMPT": cfg.whisper_initial_prompt or ""},
     )

@@ -23,8 +23,10 @@ import logging
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 
 from ..config import Config
+from ..records import TranscriptWord
 from ._common import (
     load_system_prompt,
     parse_json_response,
@@ -36,7 +38,7 @@ log = logging.getLogger(__name__)
 DEFAULT_MAX_RETRIES = 3
 
 
-def call(words: list[dict], cfg: Config) -> list[dict]:
+def select_clips(words: Sequence[TranscriptWord], cfg: Config) -> list[object]:
     """Send transcript to a local OpenAI-compatible endpoint. Retries on bad JSON."""
     base_url = cfg.local_llm_url.rstrip("/")
     model = cfg.local_llm_model
@@ -62,7 +64,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
         try:
             raw = _post_chat(base_url, model, system_prompt, user_msg,
                              temperature=cfg.local_llm_temperature,
-                             max_tokens=getattr(cfg, "clip_max_tokens", 32000))
+                             max_tokens=cfg.clip_max_tokens)
             return parse_json_response(raw)
         except (json.JSONDecodeError, ValueError) as e:
             log.warning("ollama: bad JSON on attempt %d/%d: %s",
@@ -85,8 +87,40 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
     )
 
 
+def review_story_plans(system_prompt: str, user_input: str, cfg: Config) -> list[object]:
+    """Run a separate story check without accepting an unfinished response."""
+    base_url = cfg.local_llm_url.rstrip("/")
+    user_msg = user_input + "\n\nReturn ONLY the JSON array. No prose or markdown fences."
+    last_err: Exception | None = None
+    for attempt in range(1, DEFAULT_MAX_RETRIES + 1):
+        try:
+            raw = _post_chat(
+                base_url, cfg.local_llm_model, system_prompt, user_msg,
+                temperature=cfg.local_llm_temperature,
+                max_tokens=cfg.clip_max_tokens,
+                strict=True,
+            )
+            reviews = parse_json_response(raw)
+            if not isinstance(reviews, list) or not reviews:
+                raise ValueError("response contains no reviews")
+            return reviews
+        except (TypeError, ValueError, KeyError, IndexError) as exc:
+            last_err = exc
+            log.warning("Story check: bad local response on attempt %d/%d: %s",
+                        attempt, DEFAULT_MAX_RETRIES, exc)
+            cfg = _with_lower_temp(cfg)
+            if attempt < DEFAULT_MAX_RETRIES:
+                time.sleep(1.0)
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"Story check: failed to reach {base_url}. Check the local server.") from exc
+    raise RuntimeError(
+        f"Story check: local model returned no usable review after {DEFAULT_MAX_RETRIES} attempts. "
+        f"Last error: {last_err}. Retry with a larger model or --clip-engine anthropic."
+    )
+
+
 def _post_chat(base_url: str, model: str, system: str, user: str,
-               temperature: float, max_tokens: int = 32000) -> str:
+               temperature: float, max_tokens: int = 32000, *, strict: bool = False) -> str:
     """Minimal OpenAI-compatible chat completion using stdlib urllib."""
     body = json.dumps({
         "model": model,
@@ -107,6 +141,23 @@ def _post_chat(base_url: str, model: str, system: str, user: str,
     )
     with urllib.request.urlopen(req, timeout=600) as resp:  # 10 min cap
         data = json.loads(resp.read().decode("utf-8"))
+    if strict:
+        choices = data.get("choices") if isinstance(data, dict) else None
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise ValueError("response contains no completion")
+        finish_reason = choices[0].get("finish_reason")
+        if finish_reason != "stop":
+            advice = (
+                "Raise SHORTSMITH_CLIP_MAX_TOKENS and retry."
+                if finish_reason == "length"
+                else "Retry the story check."
+            )
+            raise RuntimeError(f"Story check: local response did not finish ({finish_reason}). {advice}")
+        message = choices[0].get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("response contains no text")
+        return content
     return data["choices"][0]["message"]["content"]
 
 

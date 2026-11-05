@@ -26,10 +26,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import render_remotion as rr  # noqa: E402  (_overlay_windows, _probe_duration)
-
-from shortsmith.config import AUTO_SHORTS_ROOT  # noqa: E402
+from shortsmith._files import atomic_write
+from shortsmith._process import resolve_executable
+from shortsmith.config import AUTO_SHORTS_ROOT
+from shortsmith.rendering import project_inputs
 
 KIT_RENDERS = AUTO_SHORTS_ROOT.parent.parent / "renders"
 ALL_DIR = KIT_RENDERS / "_all"
@@ -41,19 +41,10 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True, capture_output=True)
 
 
-def _deliverable(proj: Path) -> Path | None:
-    r = proj / "renders"
-    for name in ("final_sfx.mp4", "final_remotion.mp4"):
-        if (r / name).exists():
-            return r / name
-    cands = [p for p in r.glob("*.mp4") if not p.stem.startswith("_")] if r.is_dir() else []
-    return max(cands, key=lambda p: p.stat().st_mtime) if cands else None
-
-
 def _hook_time(proj: Path, dur: float) -> float:
     """Mid-point of the opening (hook) overlay window; fall back to ~1s."""
     try:
-        wins = rr._overlay_windows(proj, dur)
+        wins = project_inputs.overlay_windows(proj, dur)
     except Exception as e:
         print(f"warning: {proj.name}: could not read overlay windows ({e}); falling back to ~1s hook time")
         wins = []
@@ -67,11 +58,12 @@ def apply_thumbnail(deliverable: Path, hook_t: float, freeze: bool,
     poster, and replace `deliverable` in place. Returns the hook .jpg path."""
     r = deliverable.parent
     thumb = r / "thumb.jpg"
-    _run(["ffmpeg", "-y", "-ss", f"{hook_t}", "-i", str(deliverable),
+    _run([resolve_executable("ffmpeg"), "-y", "-ss", f"{hook_t}", "-i", str(deliverable),
           "-frames:v", "1", "-q:v", "2", str(thumb)])
     if sidecar_jpg:
         sidecar_jpg.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(thumb, sidecar_jpg)
+        if sidecar_jpg.resolve() != thumb.resolve():
+            shutil.copy(thumb, sidecar_jpg)
 
     src = deliverable
     freeze_clip = r / "_freeze.mp4"
@@ -79,12 +71,12 @@ def apply_thumbnail(deliverable: Path, hook_t: float, freeze: bool,
     if freeze:
         # Silent freeze of the hook frame, matched to the render's specs so the
         # concat filter (which requires identical w/h/fps/sr) joins cleanly.
-        _run(["ffmpeg", "-y", "-loop", "1", "-i", str(thumb),
+        _run([resolve_executable("ffmpeg"), "-y", "-loop", "1", "-i", str(thumb),
               "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
               "-t", f"{FREEZE_SECONDS}", "-r", str(FPS), "-s", f"{W}x{H}",
               "-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac",
               "-shortest", str(freeze_clip)])
-        _run(["ffmpeg", "-y", "-i", str(freeze_clip), "-i", str(deliverable),
+        _run([resolve_executable("ffmpeg"), "-y", "-i", str(freeze_clip), "-i", str(deliverable),
               "-filter_complex",
               "[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]",
               "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-c:a", "aac",
@@ -94,7 +86,7 @@ def apply_thumbnail(deliverable: Path, hook_t: float, freeze: bool,
 
     # Embed the hook frame as the MP4 poster (attached_pic).
     poster_out = r / "_thumb_poster.mp4"
-    _run(["ffmpeg", "-y", "-i", str(src), "-i", str(thumb),
+    _run([resolve_executable("ffmpeg"), "-y", "-i", str(src), "-i", str(thumb),
           "-map", "0", "-map", "1", "-c", "copy", "-c:v:1", "mjpeg",
           "-disposition:v:1", "attached_pic", "-movflags", "+faststart",
           str(poster_out)])
@@ -104,25 +96,25 @@ def apply_thumbnail(deliverable: Path, hook_t: float, freeze: bool,
     return thumb
 
 
-def process(proj: Path, freeze: bool, force: bool) -> bool:
-    deliv = _deliverable(proj)
-    if not deliv:
+def make_thumbnail(project_dir: Path, freeze: bool, force: bool) -> bool:
+    deliverable = project_inputs.finalized_deliverable(project_dir)
+    if not deliverable:
         return False
-    marker = proj / "renders" / ".thumb_done"
+    marker = project_dir / "renders" / ".thumb_done"
     # Skip only if the thumbnail is still current. If the deliverable was
     # regenerated later (e.g. finalize --force-remotion), the marker is stale and
     # we must re-thumbnail, or the new video ships with no cover.
     if (marker.exists() and not force
-            and marker.stat().st_mtime >= deliv.stat().st_mtime):
+            and marker.stat().st_mtime >= deliverable.stat().st_mtime):
         return False
-    dur = rr._probe_duration(deliv)
-    hook_t = _hook_time(proj, dur)
-    base = f"{proj.parent.name}__{proj.name}"
-    sidecar = (ALL_DIR / f"{base}.jpg") if ALL_DIR.exists() else (proj / "renders" / "thumb.jpg")
-    apply_thumbnail(deliv, hook_t, freeze, sidecar)
+    duration = project_inputs.probe_duration(deliverable)
+    hook_t = _hook_time(project_dir, duration)
+    base = f"{project_dir.parent.name}__{project_dir.name}"
+    sidecar = (ALL_DIR / f"{base}.jpg") if ALL_DIR.exists() else (project_dir / "renders" / "thumb.jpg")
+    apply_thumbnail(deliverable, hook_t, freeze, sidecar)
     if ALL_DIR.exists():  # refresh the consolidated copy with the new poster/freeze
-        shutil.copy(deliv, ALL_DIR / f"{base}.mp4")
-    marker.write_text("done\n", encoding="utf-8")
+        shutil.copy(deliverable, ALL_DIR / f"{base}.mp4")
+    atomic_write(marker, "done\n")
     return True
 
 
@@ -146,7 +138,7 @@ def main() -> int:
         if not src_dir.is_dir():
             continue
         for proj in sorted(src_dir.glob("short-*")):
-            if proj.is_dir() and process(proj, args.freeze, args.force):
+            if proj.is_dir() and make_thumbnail(proj, args.freeze, args.force):
                 done += 1
     print(f"Thumbnailed {done} shorts.")
     return 0

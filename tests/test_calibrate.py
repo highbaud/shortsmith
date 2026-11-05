@@ -3,13 +3,12 @@ and turning them into clip-picking calibration. All offline."""
 from __future__ import annotations
 
 import json
-import sys
+import os
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import calibrate  # noqa: E402
+from scripts import calibrate
 
 
 def test_rows_are_found_at_any_nesting_and_keys_match_loosely() -> None:
@@ -84,6 +83,30 @@ def test_emit_writes_the_three_calibration_files(tmp_path: Path) -> None:
     assert "Top performers" in report and "Underperformers" in report
 
 
+@pytest.mark.parametrize("name", ["performance.json", "top_topics.json", "weak_topics.json", "report.md"])
+def test_failed_calibration_write_keeps_previous_output_and_allows_retry(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / name
+    prior = b"previous complete output\n"
+    target.write_bytes(prior)
+    replace = os.replace
+
+    def fail_replace(source, destination):
+        if Path(destination) == target:
+            raise OSError("calibration replacement failed")
+        return replace(source, destination)
+
+    with monkeypatch.context() as filesystem:
+        filesystem.setattr(os, "replace", fail_replace)
+        with pytest.raises(OSError, match="calibration replacement failed"):
+            calibrate.emit([], tmp_path)
+    assert target.read_bytes() == prior
+    assert list(tmp_path.glob("*.tmp")) == []
+    calibrate.emit([], tmp_path)
+    assert target.read_bytes() != prior
+
+
 def test_ledger_parser_reads_the_real_shape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ledger_file = tmp_path / "scheduled_ledger.json"
     ledger_file.write_text(json.dumps({
@@ -95,3 +118,18 @@ def test_ledger_parser_reads_the_real_shape(tmp_path: Path, monkeypatch: pytest.
     assert entries == [{"slug": "grow-vs-maintain-wealth-skill",
                         "topic": "grow vs maintain wealth skill", "brand": "jc",
                         "date": "2026-06-02"}]
+
+
+def test_unreadable_file_in_analytics_dir_fails_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    analytics = tmp_path / "analytics"
+    analytics.mkdir()
+    (analytics / "good.json").write_text("[]", encoding="utf-8")
+    (analytics / "bad.json").write_text("{not json", encoding="utf-8")
+    out = tmp_path / "out"
+    monkeypatch.setattr(calibrate, "load_ledger", lambda: [{"topic": "x"}])
+    monkeypatch.setattr("sys.argv", ["calibrate.py", "--analytics", str(analytics), "--out", str(out)])
+
+    assert calibrate.main() == 1
+    assert not out.exists()

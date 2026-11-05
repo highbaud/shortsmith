@@ -8,16 +8,18 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import apply_remotion as ar  # noqa: E402
-import gen_broll  # noqa: E402
-import render_remotion  # noqa: E402
-import render_stamp  # noqa: E402
+from shortsmith.rendering import apply_remotion as ar
+from shortsmith.rendering import (
+    broll_assets,
+    gen_broll,
+    project_inputs,
+    render_remotion,
+    render_stamp,
+)
 
 
 @pytest.fixture
@@ -39,17 +41,16 @@ def short(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict:
         rendered.append(kwargs)
         return out
 
-    monkeypatch.setattr(render_remotion, "_hyperframes_renders", lambda p: [base])
+    monkeypatch.setattr(project_inputs, 'hyperframes_renders', lambda p: [base])
     monkeypatch.setattr(render_remotion, "render", fake_render)
     monkeypatch.setattr(gen_broll, "generate", lambda *a, **k: None)
     people = tmp_path / "people"
     people.mkdir()
-    monkeypatch.setattr(gen_broll, "PEOPLE_DIR", people)
-    monkeypatch.setattr(gen_broll, "PEOPLE_MANIFEST", people / "people.json")
-    monkeypatch.setattr(gen_broll, "MANUAL_DIR", people / "manual")
+    monkeypatch.setattr(broll_assets, 'PEOPLE_DIR', people)
+    monkeypatch.setattr(broll_assets, 'PEOPLE_MANIFEST', people / "people.json")
+    monkeypatch.setattr(broll_assets, 'MANUAL_DIR', people / "manual")
     monkeypatch.setattr(render_stamp, "code_files", lambda root=None: [])
-    ar.reset_stats()
-    return {"proj": proj, "base": base, "rendered": rendered}
+    return {"proj": proj, "base": base, "rendered": rendered, "stats": ar.RenderStats()}
 
 
 def stamp_of(short: dict) -> dict:
@@ -77,8 +78,12 @@ def test_a_stamp_from_an_older_version_is_not_current(short: dict) -> None:
     out = short["proj"] / "renders" / "final_remotion.mp4"
     out.write_bytes(b"mp4")
     current = stamp_of(short)
-    render_stamp.write_stamp(short["proj"], {**current, "version": current["version"] - 1})
+    prior = {**current, "version": current["version"] - 1, "extra": "keep legacy data"}
+    render_stamp.write_stamp(short["proj"], prior)
+    assert render_stamp.read_stamp(short["proj"]) == prior
     assert not render_stamp.is_current(short["proj"], current, out)
+    assert render_stamp.changed_inputs(render_stamp.read_stamp(short["proj"]), current) == [
+        "stamp version"]
 
 
 def test_an_unreadable_stamp_re_renders_instead_of_falling_back_to_mtimes(
@@ -86,15 +91,63 @@ def test_an_unreadable_stamp_re_renders_instead_of_falling_back_to_mtimes(
 ) -> None:
     """A corrupt stamp is not the same as no stamp: the short WAS stamped, so
     the weaker legacy mtime rule must not rescue it."""
-    ar.apply_remotion(short["proj"])
+    ar.apply_remotion(short["proj"], stats=short["stats"])
     assert len(short["rendered"]) == 1
     render_stamp.stamp_path(short["proj"]).write_text("{ truncated", encoding="utf-8")
     assert render_stamp.has_stamp(short["proj"])
     assert render_stamp.read_stamp(short["proj"]) is None
 
-    ar.apply_remotion(short["proj"])
+    ar.apply_remotion(short["proj"], stats=short["stats"])
     assert len(short["rendered"]) == 2
-    assert ar.RUN_STATS["legacy_skipped"] == 0
+    assert short["stats"].legacy_skipped == 0
+
+
+@pytest.mark.parametrize("inputs", ["bad", ["bad"], None])
+@pytest.mark.parametrize("matching_digest", [False, True])
+def test_malformed_stamp_input_fields_trigger_a_safe_render_then_become_current(
+    short: dict, inputs: object, matching_digest: bool,
+) -> None:
+    ar.apply_remotion(short["proj"], stats=short["stats"])
+    prior = stamp_of(short)
+    prior["inputs"] = inputs
+    if not matching_digest:
+        prior["digest"] = "different digest"
+    render_stamp.stamp_path(short["proj"]).write_text(json.dumps(prior), encoding="utf-8")
+
+    ar.apply_remotion(short["proj"], stats=short["stats"])
+
+    assert len(short["rendered"]) == 2
+    assert short["stats"].legacy_skipped == 0
+    saved = render_stamp.read_stamp(short["proj"])
+    assert isinstance(saved["inputs"], dict)
+    assert render_stamp.is_current(short["proj"], stamp_of(short), short["proj"] / "renders/final_remotion.mp4")
+    ar.apply_remotion(short["proj"], stats=short["stats"])
+    assert len(short["rendered"]) == 2
+    assert short["stats"].current == 1
+
+
+def test_invalid_utf8_stamp_also_uses_the_safe_rerender_path(short: dict) -> None:
+    ar.apply_remotion(short["proj"], stats=short["stats"])
+    render_stamp.stamp_path(short["proj"]).write_bytes(b"\xff")
+
+    ar.apply_remotion(short["proj"], stats=short["stats"])
+
+    assert len(short["rendered"]) == 2
+    assert short["stats"].legacy_skipped == 0
+
+
+def test_older_stamp_without_inputs_keeps_its_digest_and_version_compatibility(short: dict) -> None:
+    out = short["proj"] / "renders/final_remotion.mp4"
+    out.write_bytes(b"existing render")
+    current = stamp_of(short)
+    prior = {"digest": current["digest"], "version": current["version"], "extra": "keep"}
+    render_stamp.stamp_path(short["proj"]).write_text(json.dumps(prior), encoding="utf-8")
+
+    ar.apply_remotion(short["proj"], stats=short["stats"])
+
+    assert short["rendered"] == []
+    assert short["stats"].current == 1
+    assert render_stamp.read_stamp(short["proj"]) == prior
 
 
 def test_a_short_that_was_never_stamped_is_still_legacy(short: dict) -> None:
@@ -102,9 +155,9 @@ def test_a_short_that_was_never_stamped_is_still_legacy(short: dict) -> None:
     unscoped finalize does not rebuild the whole library."""
     (short["proj"] / "renders" / "final_remotion.mp4").write_bytes(b"old")
     assert not render_stamp.has_stamp(short["proj"])
-    ar.apply_remotion(short["proj"])
+    ar.apply_remotion(short["proj"], stats=short["stats"])
     assert short["rendered"] == []
-    assert ar.RUN_STATS["legacy_skipped"] == 1
+    assert short["stats"].legacy_skipped == 1
 
 
 @pytest.mark.parametrize("rel", [

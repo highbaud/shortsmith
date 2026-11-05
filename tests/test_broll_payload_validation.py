@@ -11,13 +11,9 @@ tests pin the Python side, where the operator actually sees the message.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import render_remotion  # noqa: E402
+from shortsmith.rendering import render_remotion
 
 DURATION = 30.0
 
@@ -84,7 +80,7 @@ class TestGenerationTimeIdentity:
 
     @staticmethod
     def _norm(slide: dict) -> list[dict]:
-        import gen_broll
+        from shortsmith.rendering import gen_broll
         return gen_broll._normalize([{"start": 1.0, "end": 3.0, **slide}], [(0.0, 30.0)])
 
     @pytest.mark.parametrize("slide,missing", [
@@ -144,3 +140,40 @@ def test_rank_still_orders_a_tie():
     ]
     out = _common.normalize_clips(clips, words)
     assert [c["hook_text"] for c in out] == ["early", "late"]
+
+
+@pytest.mark.parametrize("bad_callouts", [None, "manual callout", {}, [None, "bad", 4]])
+def test_bad_optional_callouts_do_not_drop_the_clip(bad_callouts):
+    from shortsmith.find_clips import _common
+
+    clips = [{"start": 0, "end": 10, "callouts": bad_callouts}]
+    words = [{"text": "w", "start": 0.0, "end": 10.0}]
+    out = _common.normalize_clips(clips, words)
+    assert len(out) == 1
+    assert out[0]["callouts"] == []
+
+
+def test_bad_callout_keeps_valid_neighbors_and_reports_the_error(caplog):
+    from shortsmith.find_clips import _common
+
+    valid = {"local_start": 2, "text": "$1M", "style": "bigstat"}
+    clips = [{"start": 0, "end": 10, "callouts": [None, valid, {"text": "bad"}]}]
+    words = [{"text": "w", "start": 0.0, "end": 10.0}]
+    out = _common.normalize_clips(clips, words)
+    assert len(out) == 1
+    assert [c["text"] for c in out[0]["callouts"]] == ["$1M"]
+    assert "expected an object" in caplog.text
+    assert "local_start" in caplog.text
+
+
+@pytest.mark.parametrize("field", ["local_start", "duration"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_nonfinite_callouts_are_dropped_at_normalization(field, value, caplog):
+    from shortsmith.find_clips import _common
+
+    callout = {"local_start": 2, "duration": 1, "text": "bad", field: value}
+    clips = [{"start": 0, "end": 10, "callouts": [callout]}]
+    out = _common.normalize_clips(clips, [{"text": "w", "start": 0.0, "end": 10.0}])
+    assert len(out) == 1
+    assert out[0]["callouts"] == []
+    assert "timing must be finite" in caplog.text

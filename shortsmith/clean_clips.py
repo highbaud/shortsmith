@@ -8,8 +8,8 @@ Approach:
   1. From the per-clip word transcript, find:
        (a) Filler-word ranges  — every "um/uh/like/..." occurrence
        (b) Silence ranges      — gaps between words longer than silence_min_to_cut
-  2. Merge overlapping ranges, then use ffmpeg `select`/`aselect` filters to
-     KEEP everything OUTSIDE the cut ranges (and stitch the remainder together).
+  2. Merge overlapping ranges, then keep the other video frames and use
+     sample-accurate audio trims to join the retained ranges.
   3. Return the list of applied cuts so the pipeline can adjust the post-clean
      word timings without re-transcribing (caller does this; we just emit cuts).
 
@@ -24,8 +24,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from . import story_review
+from ._files import atomic_write
+from ._media import probe_duration
+from ._process import resolve_executable
 from .captions import slice_words_for_segments
 from .config import Config
+from .records import CleaningPlan, ClipManifest, Segment, TranscriptWord
 
 log = logging.getLogger(__name__)
 
@@ -36,11 +41,11 @@ SILENCE_MIN_TO_CUT = 0.80  # seconds
 
 
 def clean_all(
-    clip_manifests: list[dict],
-    source_words: list[dict],
+    clip_manifests: list[ClipManifest],
+    source_words: list[TranscriptWord],
     work_dir: Path,
     cfg: Config,
-) -> list[dict]:
+) -> list[ClipManifest]:
     """Word-aware clean for every cut clip."""
     cleaned_dir = work_dir / "cleaned"
     cleaned_dir.mkdir(parents=True, exist_ok=True)
@@ -52,7 +57,24 @@ def clean_all(
 
         # Slice the source transcript to this clip's local timeline.
         snapped = m.get("snapped_segments") or []
-        local_words = slice_words_for_segments(source_words, snapped) if snapped else []
+        plan = plan_cleaning(
+            source_words, snapped, cfg,
+            segment_durations=m.get("segment_durations"),
+            xfade_seconds=m.get("seam_xfade_seconds", cfg.seam_xfade_seconds),
+        )
+        local_words = plan["local_words"]
+        review = m.get("story_review")
+        if cfg.story_check and review is not None and (
+            not story_review.matches_approval(
+                review, source_words, snapped, plan["retained_segments"],
+                m.get("seam_xfade_seconds"),
+            )
+            or review.get("cut_segment_durations") != m.get("segment_durations")
+        ):
+            raise ValueError(
+                f"Clip {rank}: cleaned speech differs from the approved story review. "
+                "Run again with --from-step 3 --story-check."
+            )
 
         if not local_words:
             log.warning("Clip %d: no transcript words for local timeline; copying raw as cleaned", rank)
@@ -60,14 +82,16 @@ def clean_all(
             m["cleaned_path"] = str(cleaned_path)
             m["clean_cuts"] = []
             m["words_after_clean"] = []
+            m["duration"] = probe_duration(cleaned_path)
             continue
 
         # Persist the pre-clean per-clip transcript for debugging.
-        (raw_path.parent / f"short-{rank:02d}.pre_clean.words.json").write_text(
-            json.dumps(local_words, indent=2, ensure_ascii=False), encoding="utf-8",
+        atomic_write(
+            raw_path.parent / f"short-{rank:02d}.pre_clean.words.json",
+            json.dumps(local_words, indent=2, ensure_ascii=False),
         )
 
-        cuts = _compute_cuts(local_words, cfg)
+        cuts = plan["cuts"]
         log.info("Clip %d: %d cuts (silences + fillers totaling %.2fs)",
                  rank, len(cuts), sum(ce - cs for cs, ce in cuts))
 
@@ -75,6 +99,11 @@ def clean_all(
             _apply_cuts_ffmpeg(raw_path, cuts, cleaned_path)
             words_after = _adjust_word_timings_after_cuts(local_words, cuts)
         except subprocess.CalledProcessError as e:
+            if cfg.story_check and review is not None:
+                raise RuntimeError(
+                    f"Clip {rank}: cleaning failed; the story review cannot approve "
+                    "uncleaned speech. Retry cleaning before continuing."
+                ) from e
             log.warning("Clip %d: ffmpeg select filter failed (%s); copying raw as cleaned",
                         rank, e.stderr[:200] if e.stderr else "")
             shutil.copy(raw_path, cleaned_path)
@@ -84,11 +113,61 @@ def clean_all(
         m["cleaned_path"] = str(cleaned_path)
         m["clean_cuts"] = cuts
         m["words_after_clean"] = words_after
+        m["duration"] = probe_duration(cleaned_path)
+        if not cfg.story_check:
+            m.pop("story_review", None)
 
     return clip_manifests
 
 
-def _compute_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
+def plan_cleaning(
+    source_words: list[TranscriptWord],
+    segments: list[Segment],
+    cfg: Config,
+    *,
+    segment_durations: list[float] | None = None,
+    xfade_seconds: float | None = None,
+) -> CleaningPlan:
+    """Plan cuts and retained source words without modifying any media.
+
+    Review and cleaning share this planner. Measured segment durations replace
+    nominal lengths after cutting; a changed retained-word digest stops a stale
+    approval before cleaning proceeds.
+    """
+    if cfg.story_check:
+        story_review.require_safe_boundaries(source_words, segments)
+    else:
+        story_review.require_valid_timing(source_words, segments)
+    local_words = slice_words_for_segments(
+        source_words, segments,
+        xfade_seconds=cfg.seam_xfade_seconds if xfade_seconds is None else xfade_seconds,
+        segment_durations=segment_durations,
+    )
+    cuts = _compute_cuts(local_words, cfg)
+    references: list[tuple[int, int, TranscriptWord]] = []
+    for segment_id, (start, end) in enumerate(segments):
+        if segment_durations is not None:
+            end = min(end, start + segment_durations[segment_id])
+        references.extend(
+            (segment_id, word_id, word)
+            for word_id, word in enumerate(source_words)
+            if float(word["start"]) >= start and float(word["end"]) <= end
+        )
+    retained: list[Segment] = []
+    previous = None
+    for local, (segment_id, word_id, word) in zip(local_words, references, strict=True):
+        if any(local["start"] < end and local["end"] > start for start, end in cuts):
+            previous = None
+            continue
+        if previous == (segment_id, word_id - 1):
+            retained[-1][1] = float(word["end"])
+        else:
+            retained.append([float(word["start"]), float(word["end"])])
+        previous = segment_id, word_id
+    return {"local_words": local_words, "cuts": cuts, "retained_segments": retained}
+
+
+def _compute_cuts(words: list[TranscriptWord], cfg: Config) -> list[tuple[float, float]]:
     """Build the (start, end) ranges to remove from this clip."""
     cuts: list[tuple[float, float]] = []
 
@@ -105,10 +184,22 @@ def _compute_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
     cuts.extend(_silence_cuts(words, cfg))
 
     # 4. Merge overlapping/adjacent cuts so we issue a single, contiguous range.
-    return _merge_overlapping(cuts)
+    return [
+        (start, end) for start, end in _merge_overlapping(cuts)
+        if not any(
+            float(word["start"]) < end and float(word["end"]) > start
+            and not (start <= float(word["start"]) and end >= float(word["end"]))
+            for word in words
+        )
+    ]
 
 
-def _stutter_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
+def _match_key(w: TranscriptWord) -> str:
+    """Lowercased word with trailing punctuation and cut-off hyphens removed, for matching."""
+    return (w.get("text") or w.get("word") or "").strip().lower().rstrip(",.?!:;-")
+
+
+def _stutter_cuts(words: list[TranscriptWord], cfg: Config) -> list[tuple[float, float]]:
     """Collapse immediate identical word repetitions (stammers).
 
     For a run of >= stutter_min_repeats adjacent words sharing the same
@@ -119,20 +210,17 @@ def _stutter_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
     collapse, so deliberate, evenly-paced emphasis ("no, no, no") is preserved
     because its inter-word gaps exceed stutter_max_gap.
     """
-    if not getattr(cfg, "stutter_repair", True) or len(words) < 2:
+    if not cfg.stutter_repair or len(words) < 2:
         return []
 
-    max_gap = getattr(cfg, "stutter_max_gap", 0.35)
-    min_repeats = getattr(cfg, "stutter_min_repeats", 2)
-
-    def norm(w: dict) -> str:
-        return (w.get("text") or w.get("word") or "").strip().lower().rstrip(",.?!:;-")
+    max_gap = cfg.stutter_max_gap
+    min_repeats = cfg.stutter_min_repeats
 
     cuts: list[tuple[float, float]] = []
     n = len(words)
     i = 0
     while i < n - 1:
-        stem = norm(words[i])
+        stem = _match_key(words[i])
         if not stem:
             i += 1
             continue
@@ -140,7 +228,7 @@ def _stutter_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
         j = i
         while j + 1 < n:
             nxt = words[j + 1]
-            if norm(nxt) != stem:
+            if _match_key(nxt) != stem:
                 break
             gap = float(nxt["start"]) - float(words[j]["end"])
             if gap > max_gap:
@@ -152,7 +240,7 @@ def _stutter_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
             cut_start = float(words[i]["start"])
             cut_end = float(words[j]["start"])
             if i > 0:
-                cut_start = max(cut_start, float(words[i - 1]["end"]) + 0.001)
+                cut_start = max(cut_start, float(words[i - 1]["end"]))
             if cut_end > cut_start + 0.02:
                 cuts.append((cut_start, cut_end))
             i = j + 1
@@ -161,7 +249,7 @@ def _stutter_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
     return cuts
 
 
-def _filler_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
+def _filler_cuts(words: list[TranscriptWord], cfg: Config) -> list[tuple[float, float]]:
     """Per the configured filler list, compute safe cut ranges around each
     filler occurrence. Pads ±filler_pad_seconds but clamps to the surrounding
     silence so we never overrun into adjacent words.
@@ -172,8 +260,8 @@ def _filler_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
 
     def safe_pad(prev_end_t: float, cut_start: float, cut_end: float, next_start_t: float) -> tuple[float, float]:
         # Clamp the padded cut so it never enters the previous or next word.
-        cs = max(prev_end_t + 0.001, cut_start - cfg.filler_pad_seconds)
-        ce = min(next_start_t - 0.001, cut_end + cfg.filler_pad_seconds)
+        cs = max(prev_end_t, cut_start - cfg.filler_pad_seconds)
+        ce = min(next_start_t, cut_end + cfg.filler_pad_seconds)
         return cs, ce
 
     cuts: list[tuple[float, float]] = []
@@ -181,7 +269,7 @@ def _filler_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
     i = 0
     while i < n:
         w = words[i]
-        text = (w.get("text") or w.get("word") or "").strip().lower().rstrip(",.?!:;")
+        text = _match_key(w)
         # Single-word filler
         if text in single:
             prev_end = float(words[i - 1]["end"]) if i > 0 else 0.0
@@ -197,11 +285,7 @@ def _filler_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
         for parts in multi:
             if i + len(parts) > n:
                 continue
-            ok = all(
-                (words[i + j].get("text") or words[i + j].get("word") or "")
-                .strip().lower().rstrip(",.?!:;") == parts[j]
-                for j in range(len(parts))
-            )
+            ok = all(_match_key(words[i + j]) == parts[j] for j in range(len(parts)))
             if ok:
                 prev_end = float(words[i - 1]["end"]) if i > 0 else 0.0
                 last = words[i + len(parts) - 1]
@@ -219,7 +303,7 @@ def _filler_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
     return cuts
 
 
-def _silence_cuts(words: list[dict], cfg: Config) -> list[tuple[float, float]]:
+def _silence_cuts(words: list[TranscriptWord], cfg: Config) -> list[tuple[float, float]]:
     """Cut inter-word silences longer than SILENCE_MIN_TO_CUT, preserving a
     breath equal to cfg.silence_margin on each end.
     """
@@ -249,11 +333,11 @@ def _merge_overlapping(cuts: list[tuple[float, float]]) -> list[tuple[float, flo
 
 
 def _apply_cuts_ffmpeg(input_path: Path, cuts: list[tuple[float, float]], out_path: Path) -> None:
-    """Use ffmpeg's select/aselect filter to keep only NON-cut ranges."""
+    """Keep non-cut video frames and sample-accurate audio ranges."""
     if not cuts:
         # No cuts — just transcode to normalize keyframes
         cmd = [
-            "ffmpeg", "-y",
+            resolve_executable("ffmpeg"), "-y",
             "-i", str(input_path),
             "-c:v", "libx264", "-preset", "medium", "-crf", "18",
             "-g", "30", "-keyint_min", "30",
@@ -264,15 +348,33 @@ def _apply_cuts_ffmpeg(input_path: Path, cuts: list[tuple[float, float]], out_pa
         subprocess.run(cmd, check=True, capture_output=True)
         return
 
-    # Build the "not in any cut" expression: not(between(t,cs1,ce1)+between(t,cs2,ce2)+...)
+    # Video cuts have frame precision. Audio must use sample-accurate trims:
+    # aselect drops whole decoded audio frames and can clip the next word even
+    # when the requested cut ends just before it.
     between_terms = "+".join(f"between(t,{cs},{ce})" for cs, ce in cuts)
     select_expr = f"not({between_terms})"
+    keep_ranges: list[tuple[float, float | None]] = []
+    previous_end = 0.0
+    for start, end in cuts:
+        if start > previous_end:
+            keep_ranges.append((previous_end, start))
+        previous_end = max(previous_end, end)
+    keep_ranges.append((previous_end, None))
+    audio_parts = []
+    for index, (keep_start, keep_end) in enumerate(keep_ranges):
+        trim = f"atrim=start={keep_start}" + (f":end={keep_end}" if keep_end is not None else "")
+        audio_parts.append(f"[0:a]{trim},asetpts=PTS-STARTPTS[a{index}]")
+    audio_parts.append(
+        "".join(f"[a{index}]" for index in range(len(keep_ranges)))
+        + f"concat=n={len(keep_ranges)}:v=0:a=1[clean_audio]"
+    )
 
     cmd = [
-        "ffmpeg", "-y",
+        resolve_executable("ffmpeg"), "-y",
         "-i", str(input_path),
         "-vf", f"select='{select_expr}',setpts=N/FRAME_RATE/TB",
-        "-af", f"aselect='{select_expr}',asetpts=N/SR/TB",
+        "-filter_complex", ";".join(audio_parts),
+        "-map", "0:v", "-map", "[clean_audio]",
         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
         "-g", "30", "-keyint_min", "30",
         "-c:a", "aac", "-b:a", "192k",
@@ -283,9 +385,9 @@ def _apply_cuts_ffmpeg(input_path: Path, cuts: list[tuple[float, float]], out_pa
 
 
 def _adjust_word_timings_after_cuts(
-    words: list[dict],
+    words: list[TranscriptWord],
     cuts: list[tuple[float, float]],
-) -> list[dict]:
+) -> list[TranscriptWord]:
     """Given the pre-clean word list and the cuts applied, return new word
     timings on the post-clean local timeline.
 
@@ -311,7 +413,7 @@ def _adjust_word_timings_after_cuts(
                 break
         return total
 
-    out: list[dict] = []
+    out: list[TranscriptWord] = []
     for w in words:
         ws = float(w["start"])
         we = float(w["end"])

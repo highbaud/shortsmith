@@ -12,18 +12,16 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
+from shortsmith.rendering import broll_assets
+
 ROOT = Path(__file__).resolve().parent.parent
 MANUAL = ROOT / "assets" / "people" / "manual"
-sys.path.insert(0, str(ROOT / "scripts"))
-import gen_broll  # noqa: E402
-
 IMAGES = sorted(p for p in MANUAL.glob("*")
-                if p.suffix.lower() in gen_broll.IMAGE_SUFFIXES)
+                if p.suffix.lower() in broll_assets.IMAGE_SUFFIXES)
 
 
 def test_manual_photos_are_present():
@@ -44,7 +42,7 @@ def test_each_photo_is_tracked_by_git(image: Path):
 @pytest.mark.parametrize("image", IMAGES, ids=lambda p: p.name)
 def test_each_photo_resolves_by_slug(image: Path):
     """`_manual_person_photo` looks up by slug, so the basename is the contract."""
-    found = gen_broll._manual_person_photo(image.stem)
+    found = broll_assets._manual_person_photo(image.stem)
     assert found is not None, f"{image.name} does not resolve for slug {image.stem!r}"
     assert found.resolve() == image.resolve()
 
@@ -57,7 +55,7 @@ def test_each_photo_carries_provenance(image: Path):
     meta = json.loads(sidecar.read_text(encoding="utf-8"))
     for key in ("source_url", "license"):
         assert meta.get(key), f"{sidecar.name} is missing {key}"
-    prov = gen_broll._manual_provenance(image)
+    prov = broll_assets._manual_provenance(image)
     assert prov.get("source_url") == meta["source_url"]
 
 

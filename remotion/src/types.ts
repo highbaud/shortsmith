@@ -35,15 +35,11 @@ export type TextSlide = SlideCommon & {
 
 export type StatSlide = SlideCommon & {
   type: "stat";
-  /** The final value text shown after the count-up, e.g. "$1.4M" or "100%". */
-  value: string;
-  /** Numeric value to count up to; if set, animates from `from` to this. */
-  to?: number;
   from?: number;
   prefix?: string;
   suffix?: string;
   label?: string;
-};
+} & ({ value: string; to?: number } | { value?: string; to: number });
 
 export type ListSlide = SlideCommon & {
   type: "list";
@@ -55,9 +51,7 @@ export type LogoSlide = SlideCommon & {
   type: "logo";
   /** Public-dir-relative path to the downloaded SVG/PNG, e.g. "assets/broll/ripple.svg". */
   src: string;
-  /** Brand/company name shown under the mark. */
   name?: string;
-  /** Optional short tagline under the name. */
   caption?: string;
   /** True if the asset is a monochrome silhouette that should be tinted to `color`. */
   monochrome?: boolean;
@@ -71,12 +65,26 @@ export type PersonSlide = SlideCommon & {
   type: "person";
   /** Public-dir-relative path to the downloaded photo, e.g. "assets/broll/brad.jpg". */
   src: string;
-  /** Person's name (rendered as a lower-third over the photo). */
   name?: string;
-  /** Role/title line under the name. */
   role?: string;
   /** Ken Burns direction; defaults to "in" (slow zoom in). */
   motion?: "in" | "out" | "left" | "right" | "up" | "down";
+};
+
+export type ImageSlide = SlideCommon & {
+  type: "image";
+  /** Public-dir-relative photo or screenshot path. */
+  src: string;
+  title?: string;
+  /** These provenance keys match the Python source ledger and credit files. */
+  source_label?: string;
+  source_url?: string;
+  source_kind?: "places" | "images" | "press" | "tweets";
+  date?: string;
+  attribution?: string;
+  license?: string;
+  /** Keep the complete source visible by default, including tweet author/date. */
+  fit?: "cover" | "contain";
 };
 
 export type BRollSlide =
@@ -84,7 +92,8 @@ export type BRollSlide =
   | StatSlide
   | ListSlide
   | LogoSlide
-  | PersonSlide;
+  | PersonSlide
+  | ImageSlide;
 
 /** Accent palette derived from the short's Hyperframes style preset, so b-roll
  *  slides color-match the overlays. Slides without an explicit `color` fall back
@@ -103,8 +112,8 @@ export type Palette = {
 export type VFXEvent = {
   t: number;          // seconds into the final clip
   effect: "glare" | "zoom-punch" | "flash";
-  color: string;      // hex tint (ignored by zoom-punch — geometry-only)
-  intensity: number;  // 0..1 opacity / scale-bump multiplier
+  color: string;      // #rgb or #rrggbb tint (ignored by zoom-punch geometry)
+  intensity: number;  // nonnegative multiplier; values above 1 strengthen the effect
   durationMs: number; // total length of this single event
 };
 
@@ -113,7 +122,6 @@ export type PanelRect = { x: number; y: number; w: number; h: number };
 
 export type SpeakerLabel = {
   name: string;
-  /** Which stacked square the chip belongs to. */
   position: "top" | "bottom";
 };
 
@@ -138,15 +146,15 @@ export type ShortProps = {
   /** Windows where Hyperframes overlays are active — captions yield here. */
   overlayWindows: TimeWindow[];
 
-  // B-roll cutaways (manual authored list, already validated against free gaps).
-  broll: BRollSlide[];
+  // Serialized slides are narrowed before rendering or yielding captions.
+  broll: unknown;
 
   /** Accent palette from the short's style preset (color-matches Hyperframes). */
   palette: Palette;
 
   /** Optional visual transitions (Capcut-style glare, zoom-punch, flash).
    *  Empty / omitted = no VFX layer rendered. */
-  vfxEvents?: VFXEvent[];
+  vfxEvents?: unknown;
 
   /** Caption type size in px. Defaults to 96. Lowered when the caption band is
    *  tight, a split-stack band is bracketed by a face above and below, so
@@ -170,7 +178,6 @@ export type ShortProps = {
    *  layout carries safe-area margins. */
   speakerPanels?: PanelRect[];
 
-  /** Split-stack only: where the logo badge goes (see BadgeAnchor). */
   logoBadgeAnchor?: BadgeAnchor;
 };
 

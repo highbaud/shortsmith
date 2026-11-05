@@ -9,6 +9,8 @@ import json
 import sys
 from pathlib import Path
 
+from shortsmith._files import atomic_write
+
 WORK_ROOT = Path(__file__).resolve().parent.parent / "work"
 
 
@@ -41,6 +43,7 @@ def main() -> int:
         print(f"No work dir yet: {WORK_ROOT}. Run the pipeline first.")
         return 0
     count = 0
+    failed = False
     for wd in sorted(WORK_ROOT.iterdir()):
         if not wd.is_dir():
             continue
@@ -55,13 +58,14 @@ def main() -> int:
             if not isinstance(words, list) or not words:
                 continue
             text = format_one(words)
-            ft.write_text(text, encoding="utf-8")
+            atomic_write(ft, text)
             count += 1
             print(f"[{count}] {wd.name}: {len(words)} words, {words[-1]['end']/60:.0f}min")
         except Exception as e:
+            failed = True
             print(f"FAILED {wd.name}: {e}")
     print(f"Formatted {count} transcripts.")
-    return 0
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

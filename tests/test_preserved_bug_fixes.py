@@ -7,14 +7,11 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import add_sfx  # noqa: E402
-import calibrate  # noqa: E402
-import render_remotion  # noqa: E402
+from scripts import calibrate
+from shortsmith.rendering import add_sfx, render_remotion
 
 
 class TestAddSfxSkipsStagedTemps:
@@ -39,13 +36,13 @@ class TestAddSfxSkipsStagedTemps:
 
     def test_a_newer_staged_temp_is_not_picked(self, tmp_path, monkeypatch):
         self._project(tmp_path, monkeypatch, ["final_remotion.mp4", "_base.mp4"])
-        found = add_sfx.find_render("work-slug", 1)
+        found = add_sfx.find_latest_non_sfx_render("work-slug", 1)
         assert found is not None
         assert found[1].name == "final_remotion.mp4", "picked the staged temp"
 
     def test_a_real_render_is_still_picked(self, tmp_path, monkeypatch):
         self._project(tmp_path, monkeypatch, ["_base.mp4", "final_remotion.mp4"])
-        found = add_sfx.find_render("work-slug", 1)
+        found = add_sfx.find_latest_non_sfx_render("work-slug", 1)
         assert found is not None and found[1].name == "final_remotion.mp4"
 
 

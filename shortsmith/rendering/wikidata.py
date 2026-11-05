@@ -9,19 +9,20 @@ The shared API plumbing lives here:
 
 Every function takes the HTTP getter as its first argument, so callers supply
 their own cache / throttle / retry / offline policy (gen_broll's `_http_get`)
-and this module stays free of network policy.
-"""
+and this module stays free of network policy."""
+
 from __future__ import annotations
 
 import json
 import urllib.parse
 from collections.abc import Callable
 
-# Returns response bytes, or None on any failure (offline, 404, timeout).
 Fetch = Callable[[str], bytes | None]
 
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
+
 COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+
 HUMAN = "Q5"  # Wikidata: "human"
 
 
@@ -74,8 +75,9 @@ def current_claim_values(entity: dict, prop: str) -> list[str]:
     return [value for *_, value in sorted(scored)]
 
 
-def get_entities(fetch: Fetch, qids: list[str],
-                 props: str = "claims%7Cdescriptions%7Clabels") -> dict[str, dict]:
+def get_entities(
+    fetch: Fetch, qids: list[str], props: str = "claims%7Cdescriptions%7Clabels"
+) -> dict[str, dict]:
     """Batch-load entities. Ids the API has no item for are simply absent.
 
     A deleted or never-allocated id comes back as a `{"id": ..., "missing": ""}`
@@ -87,16 +89,27 @@ def get_entities(fetch: Fetch, qids: list[str],
     if not qids:
         return {}
     ids = "%7C".join(qids[:50])  # the API caps a batch at 50
-    entities = api_json(fetch, f"{WIKIDATA_API}?action=wbgetentities&ids={ids}"
-                               f"&props={props}&languages=en&format=json").get("entities") or {}
-    return {qid: entity for qid, entity in entities.items()
-            if isinstance(entity, dict) and "missing" not in entity}
+    entities = (
+        api_json(
+            fetch,
+            f"{WIKIDATA_API}?action=wbgetentities&ids={ids}&props={props}&languages=en&format=json",
+        ).get("entities")
+        or {}
+    )
+    return {
+        qid: entity
+        for qid, entity in entities.items()
+        if isinstance(entity, dict) and "missing" not in entity
+    }
 
 
 def search_entity_ids(fetch: Fetch, name: str, limit: int = 10) -> list[str]:
     query = urllib.parse.quote(name)
-    result = api_json(fetch, f"{WIKIDATA_API}?action=wbsearchentities&search={query}"
-                             f"&language=en&uselang=en&type=item&limit={limit}&format=json")
+    result = api_json(
+        fetch,
+        f"{WIKIDATA_API}?action=wbsearchentities&search={query}"
+        f"&language=en&uselang=en&type=item&limit={limit}&format=json",
+    )
     return [hit["id"] for hit in (result.get("search") or []) if hit.get("id")]
 
 
@@ -109,11 +122,11 @@ def sitelinks_count(entity: dict) -> int:
 
 
 def label_of(entity: dict) -> str:
-    return ((entity.get("labels", {}).get("en") or {}).get("value") or "")
+    return (entity.get("labels", {}).get("en") or {}).get("value") or ""
 
 
 def description_of(entity: dict) -> str:
-    return ((entity.get("descriptions", {}).get("en") or {}).get("value") or "")
+    return (entity.get("descriptions", {}).get("en") or {}).get("value") or ""
 
 
 def labels_for(fetch: Fetch, qids: list[str]) -> tuple[str, ...]:
@@ -121,8 +134,7 @@ def labels_for(fetch: Fetch, qids: list[str]) -> tuple[str, ...]:
     if not qids:
         return ()
     entities = get_entities(fetch, qids, "labels")
-    return tuple(label for qid in qids
-                 if (label := label_of(entities.get(qid) or {})))
+    return tuple(label for qid in qids if (label := label_of(entities.get(qid) or {})))
 
 
 def strip_file_prefix(title: str) -> str:
@@ -149,18 +161,23 @@ def commons_file_url(title: str, width: int = 1280) -> str:
     Special:FilePath redirects to the upload host, so this works for the raw
     file and (for rasters) for a resized rendition.
     """
-    return ("https://commons.wikimedia.org/wiki/Special:FilePath/"
-            f"{urllib.parse.quote(title.replace(' ', '_'))}?width={width}")
+    return (
+        "https://commons.wikimedia.org/wiki/Special:FilePath/"
+        f"{urllib.parse.quote(title.replace(' ', '_'))}?width={width}"
+    )
 
 
-def commons_image_info(fetch: Fetch, titles: list[str],
-                       width: int = 1280) -> dict[str, tuple[str, int]]:
+def commons_image_info(
+    fetch: Fetch, titles: list[str], width: int = 1280
+) -> dict[str, tuple[str, int]]:
     """Batch title -> (thumbnail url, thumbnail width) for up to 50 files."""
     if not titles:
         return {}
     joined = "%7C".join(urllib.parse.quote("File:" + t) for t in titles[:50])
-    url = (f"{COMMONS_API}?action=query&titles={joined}&prop=imageinfo"
-           f"&iiprop=url%7Csize&iiurlwidth={width}&format=json")
+    url = (
+        f"{COMMONS_API}?action=query&titles={joined}&prop=imageinfo"
+        f"&iiprop=url%7Csize&iiurlwidth={width}&format=json"
+    )
     pages = (api_json(fetch, url).get("query") or {}).get("pages") or {}
     out: dict[str, tuple[str, int]] = {}
     for page in pages.values():

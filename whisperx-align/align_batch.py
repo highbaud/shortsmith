@@ -26,10 +26,27 @@ import os
 import sys
 import time
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 
 def _log(**kw):
     print(json.dumps(kw), flush=True)
+
+
+def _write_words(path: Path, words: list[dict]) -> None:
+    temporary = None
+    try:
+        with NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent,
+            prefix=path.name + ".", suffix=".tmp", delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(json.dumps(words, indent=2, ensure_ascii=False))
+        temporary.replace(path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -69,7 +86,7 @@ def main() -> int:
             segments = result.get("segments", [])
             if not segments:
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text("[]", encoding="utf-8")
+                _write_words(out_path, [])
                 _log(event="ok", **{"in": str(in_path), "out": str(out_path)},
                      words=0, seconds=round(time.time() - t1, 1))
                 continue
@@ -96,9 +113,7 @@ def main() -> int:
                     })
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_path.write_text(
-                json.dumps(words, indent=2, ensure_ascii=False), encoding="utf-8"
-            )
+            _write_words(out_path, words)
             _log(event="ok", **{"in": str(in_path), "out": str(out_path)},
                  words=len(words), seconds=round(time.time() - t1, 1))
         except Exception as e:  # noqa: BLE001

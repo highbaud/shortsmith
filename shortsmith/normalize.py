@@ -13,12 +13,28 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import subprocess
 from pathlib import Path
 
+from ._process import resolve_executable
 from .config import Config
 
 log = logging.getLogger(__name__)
+
+
+def _numeric_measurements(measured: object) -> dict[str, float] | None:
+    if not isinstance(measured, dict):
+        return None
+    keys = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+    try:
+        values = {key: float(measured[key]) for key in keys}
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+    if any(isinstance(measured[key], bool) or not math.isfinite(value)
+           for key, value in values.items()):
+        return None
+    return values
 
 
 def build_measure_filter(cfg: Config) -> str:
@@ -37,15 +53,18 @@ def build_apply_filter(cfg: Config, measured: dict) -> str:
     `measured` is the JSON object ffmpeg prints in pass 1 (keys: input_i,
     input_tp, input_lra, input_thresh, target_offset).
     """
+    values = _numeric_measurements(measured)
+    if values is None:
+        raise ValueError("Invalid loudnorm measurements: expected five finite numeric fields")
     return (
         f"loudnorm=I={cfg.loudness_target_lufs}:"
         f"TP={cfg.loudness_true_peak}:"
         f"LRA={cfg.loudness_range}:"
-        f"measured_I={measured['input_i']}:"
-        f"measured_TP={measured['input_tp']}:"
-        f"measured_LRA={measured['input_lra']}:"
-        f"measured_thresh={measured['input_thresh']}:"
-        f"offset={measured['target_offset']}:"
+        f"measured_I={values['input_i']}:"
+        f"measured_TP={values['input_tp']}:"
+        f"measured_LRA={values['input_lra']}:"
+        f"measured_thresh={values['input_thresh']}:"
+        f"offset={values['target_offset']}:"
         f"linear=true:print_format=summary"
     )
 
@@ -57,9 +76,10 @@ def _parse_loudnorm_json(stderr: str) -> dict | None:
     if start == -1 or end == -1 or end < start:
         return None
     try:
-        return json.loads(stderr[start:end + 1])
-    except json.JSONDecodeError:
+        measured = json.loads(stderr[start:end + 1])
+    except ValueError:
         return None
+    return measured if _numeric_measurements(measured) is not None else None
 
 
 def loudnorm_two_pass(in_wav: Path, out_wav: Path, cfg: Config) -> bool:
@@ -71,12 +91,12 @@ def loudnorm_two_pass(in_wav: Path, out_wav: Path, cfg: Config) -> bool:
 
     # Pass 1 — measure.
     measure = subprocess.run(
-        ["ffmpeg", "-hide_banner", "-i", str(in_wav),
+        [resolve_executable("ffmpeg"), "-hide_banner", "-i", str(in_wav),
          "-af", build_measure_filter(cfg), "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8",
     )
-    measured = _parse_loudnorm_json(measure.stderr)
-    if not measured:
+    measured = _parse_loudnorm_json(measure.stderr) if measure.returncode == 0 else None
+    if measured is None:
         log.warning("loudnorm pass-1 measurement failed for %s; copying unnormalized",
                     in_wav.name)
         shutil.copy(in_wav, out_wav)
@@ -84,7 +104,7 @@ def loudnorm_two_pass(in_wav: Path, out_wav: Path, cfg: Config) -> bool:
 
     # Pass 2 — apply.
     apply = subprocess.run(
-        ["ffmpeg", "-y", "-hide_banner", "-i", str(in_wav),
+        [resolve_executable("ffmpeg"), "-y", "-hide_banner", "-i", str(in_wav),
          "-af", build_apply_filter(cfg, measured),
          "-ar", "48000", str(out_wav)],
         capture_output=True, text=True, encoding="utf-8",

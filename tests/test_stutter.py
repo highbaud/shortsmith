@@ -68,3 +68,16 @@ def test_disabled_returns_empty():
     cfg.stutter_repair = False
     words = _words([("the", 1.0, 1.2), ("the", 1.25, 1.45), ("x", 1.5, 1.8)])
     assert _stutter_cuts(words, cfg) == []
+
+
+def test_filler_and_stutter_matching_share_one_normalizer() -> None:
+    from shortsmith.clean_clips import _filler_cuts
+
+    words = [
+        {"text": "So", "start": 0.0, "end": 0.3},
+        {"text": "Um-", "start": 0.8, "end": 1.0},
+        {"text": "yes.", "start": 1.6, "end": 1.9},
+    ]
+    cfg = Config(fillers=["um"])
+    assert _filler_cuts(words, cfg) == _filler_cuts([{**w, "text": w["text"].rstrip("-")} for w in words], cfg)
+    assert _filler_cuts(words, cfg)

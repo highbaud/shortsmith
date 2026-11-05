@@ -43,8 +43,10 @@ from pathlib import Path
 
 from . import gallery
 from ._media import probe_duration
+from ._process import resolve_executable
 from .config import Config
 from .layouts import LayoutSpec, load_preset
+from .records import CaptionBand, ClipManifest, current_media
 
 log = logging.getLogger(__name__)
 
@@ -57,19 +59,19 @@ _ENCODE_ARGS = [*_X264_ARGS, "-g", "30", "-keyint_min", "30", *_MUX_ARGS]
 
 
 def reframe_all(
-    clip_manifests: list[dict],
+    clip_manifests: list[ClipManifest],
     work_dir: Path,
     cfg: Config,
-) -> list[dict]:
+) -> list[ClipManifest]:
     vertical_dir = work_dir / "vertical"
     vertical_dir.mkdir(parents=True, exist_ok=True)
 
-    global_cut_aware = bool(getattr(cfg, "reframe_cut_aware", False))
-    global_layout = str(getattr(cfg, "reframe_layout", "static")).lower()
+    global_cut_aware = bool(cfg.reframe_cut_aware)
+    global_layout = str(cfg.reframe_layout).lower()
 
     for m in clip_manifests:
         rank = m["rank"]
-        src = Path(m.get("enhanced_path") or m.get("cleaned_path") or m["raw_path"])
+        src = current_media(m)
         out = vertical_dir / f"short-{rank:02d}.mp4"
         # Per-clip overrides win (one run can mix single-speaker, multicam and
         # gallery clips); else fall back to the run-level config.
@@ -181,8 +183,8 @@ def _filter_detections(raw: list[Detection], src_w: int, src_h: int,
         return []
 
     # 1a. Absolute minimum face height (resolution-aware).
-    abs_min_h_frac = getattr(cfg, "reframe_min_face_h_frac", 0.08)
-    abs_min_h = max(getattr(cfg, "reframe_min_face_h", 180.0), src_h * abs_min_h_frac)
+    abs_min_h_frac = cfg.reframe_min_face_h_frac
+    abs_min_h = max(cfg.reframe_min_face_h, src_h * abs_min_h_frac)
     filt0 = [d for d in raw if d[2] >= abs_min_h]
 
     # 1b. Biggest-face-wins: reject faces smaller than 70% of the 90th-percentile
@@ -291,7 +293,7 @@ def reframe_one(src_video: Path, out_video: Path, cfg: Config) -> None:
         cap.release()
         raise RuntimeError(f"Invalid video dimensions for {src_video}")
 
-    detector = cv2.FaceDetectorYN_create(
+    detector = cv2.FaceDetectorYN.create(
         str(cfg.yunet_model_path), "", (src_w, src_h),
         cfg.yunet_score_threshold, 0.3, 5000,
     )
@@ -329,9 +331,9 @@ def _detect_cuts(src_video: Path, cfg: Config) -> list[float]:
     scene score spikes at each cut. Threshold defaults to 0.30 — high enough to
     ignore in-shot motion, low enough to catch a cut to a different room.
     """
-    thr = float(getattr(cfg, "reframe_scene_threshold", 0.30))
+    thr = float(cfg.reframe_scene_threshold)
     proc = subprocess.run(
-        ["ffmpeg", "-i", str(src_video),
+        [resolve_executable("ffmpeg"), "-i", str(src_video),
          "-filter:v", f"select='gt(scene,{thr})',showinfo",
          "-f", "null", "-"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -429,7 +431,7 @@ def reframe_one_cut_aware(src_video: Path, out_video: Path, cfg: Config) -> None
         raise RuntimeError(f"Invalid video dimensions for {src_video}")
 
     duration = probe_duration(src_video)
-    min_shot = float(getattr(cfg, "reframe_min_shot_seconds", 0.4))
+    min_shot = float(cfg.reframe_min_shot_seconds)
     cuts = _detect_cuts(src_video, cfg)
     shots = _shot_boundaries(cuts, duration, min_shot)
 
@@ -442,7 +444,7 @@ def reframe_one_cut_aware(src_video: Path, out_video: Path, cfg: Config) -> None
         reframe_one(src_video, out_video, cfg)
         return
 
-    detector = cv2.FaceDetectorYN_create(
+    detector = cv2.FaceDetectorYN.create(
         str(cfg.yunet_model_path), "", (src_w, src_h),
         cfg.yunet_score_threshold, 0.3, 5000,
     )
@@ -490,7 +492,7 @@ def _sample_faces_in_tiles(
     import cv2  # lazy import
 
     detectors = [
-        cv2.FaceDetectorYN_create(
+        cv2.FaceDetectorYN.create(
             str(cfg.yunet_model_path), "", (t.w, t.h),
             cfg.yunet_score_threshold, 0.3, 5000,
         )
@@ -649,7 +651,7 @@ def _split_stack_crops(
 def reframe_one_split_stack(
     src_video: Path, out_video: Path, cfg: Config, required: bool = True,
     preset: str | None = None,
-) -> dict[str, float] | None:
+) -> CaptionBand | None:
     """Reframe a gallery-view two-speaker source into stacked squares.
 
     Detects the two webcam tiles, tracks each speaker's face inside their own
@@ -664,7 +666,7 @@ def reframe_one_split_stack(
     if not cfg.yunet_model_path.exists():
         raise FileNotFoundError(f"YuNet model not found at {cfg.yunet_model_path}")
 
-    spec = load_preset(preset or getattr(cfg, "split_stack_preset", None))
+    spec = load_preset(preset or cfg.split_stack_preset)
     frame = _grab_gray_frame(src_video)
 
     tiles = _resolve_tiles(frame, spec, src_video.name, required)
@@ -687,7 +689,7 @@ def reframe_one_split_stack(
 
 def _run_ffmpeg_vf(src_video: Path, out_video: Path, vf: str) -> None:
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(src_video), "-vf", vf,
+        [resolve_executable("ffmpeg"), "-y", "-i", str(src_video), "-vf", vf,
          *_ENCODE_ARGS, str(out_video)],
         check=True, capture_output=True,
     )
@@ -702,7 +704,7 @@ def _run_ffmpeg_filter_complex(src_video: Path, out_video: Path,
     copy of the same track.
     """
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(src_video),
+        [resolve_executable("ffmpeg"), "-y", "-i", str(src_video),
          "-filter_complex", filtergraph,
          "-map", "[outv]", "-map", "0:a?",
          *_ENCODE_ARGS, str(out_video)],
@@ -713,7 +715,7 @@ def _run_ffmpeg_filter_complex(src_video: Path, out_video: Path,
 def _ffmpeg_center_crop(src_video: Path, out_video: Path) -> None:
     """Dumb fallback: center-crop 9:16 strip."""
     subprocess.run(
-        ["ffmpeg", "-y", "-i", str(src_video),
+        [resolve_executable("ffmpeg"), "-y", "-i", str(src_video),
          "-vf", "crop=ih*9/16:ih,scale=1080:1920:flags=lanczos",
          *_X264_ARGS, *_MUX_ARGS, str(out_video)],
         check=True, capture_output=True,

@@ -22,10 +22,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
+from shortsmith._files import atomic_write
+from shortsmith.captions import normalize_dashes, strip_hashtags
 from shortsmith.config import AUTO_SHORTS_ROOT, KIT_ROOT
-from shortsmith.scaffold import _strip_hashtags, normalize_dashes
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORK_ROOT = REPO_ROOT / "work"
@@ -77,31 +79,34 @@ def _deep_norm(obj):
     return obj, False
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser(description="Strip hashtags + normalize dashes in captions and clip data.")
     ap.add_argument("--dry-run", action="store_true", help="Report changes; write nothing.")
     args = ap.parse_args()
 
     txt = 0
+    failed = False
     for p in _caption_files():
         try:
             original = p.read_text(encoding="utf-8")
-        except Exception as e:
+        except (OSError, ValueError) as e:
+            failed = True
             print(f"  skip {p} ({e})")
             continue
-        cleaned = normalize_dashes(_strip_hashtags(original)).rstrip("\n") + "\n"
+        cleaned = normalize_dashes(strip_hashtags(original)).rstrip("\n") + "\n"
         if cleaned == original:
             continue
         txt += 1
         print(f"{'WOULD CLEAN' if args.dry_run else 'cleaned'} txt: {p}")
         if not args.dry_run:
-            p.write_text(cleaned, encoding="utf-8")
+            atomic_write(p, cleaned)
 
     js = 0
     for p in _clip_json_files():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-        except Exception as e:
+        except (OSError, ValueError) as e:
+            failed = True
             print(f"  skip {p} ({e})")
             continue
         new, changed = _deep_norm(data)
@@ -110,11 +115,12 @@ def main() -> None:
         js += 1
         print(f"{'WOULD CLEAN' if args.dry_run else 'cleaned'} json: {p}")
         if not args.dry_run:
-            p.write_text(json.dumps(new, indent=2, ensure_ascii=False), encoding="utf-8")
+            atomic_write(p, json.dumps(new, indent=2, ensure_ascii=False))
 
     verb = "would change" if args.dry_run else "changed"
     print(f"\n{verb}: {txt} caption .txt, {js} clip-json files.")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

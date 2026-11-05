@@ -7,8 +7,11 @@ transcript length.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 from ..config import Config
+from ..model_response import text_from_blocks
+from ..records import TranscriptWord
 from ._common import (
     load_system_prompt,
     parse_json_response,
@@ -18,7 +21,7 @@ from ._common import (
 log = logging.getLogger(__name__)
 
 
-def call(words: list[dict], cfg: Config) -> list[dict]:
+def select_clips(words: Sequence[TranscriptWord], cfg: Config) -> list[object]:
     """Send the transcript to Claude and return parsed JSON clip list."""
     import anthropic
 
@@ -33,7 +36,7 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
     system_prompt = load_system_prompt()
 
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
-    max_tokens = getattr(cfg, "clip_max_tokens", 32000)
+    max_tokens = cfg.clip_max_tokens
     log.info("Calling Claude (%s) to rank clips (max_tokens=%d)...",
              cfg.claude_model, max_tokens)
     resp = client.messages.create(
@@ -52,5 +55,42 @@ def call(words: list[dict], cfg: Config) -> list[dict]:
             max_tokens,
         )
 
-    raw = resp.content[0].text  # type: ignore[attr-defined]
+    raw = text_from_blocks(resp.content)
     return parse_json_response(raw)
+
+
+def review_story_plans(system_prompt: str, user_input: str, cfg: Config) -> list[object]:
+    """Run a separate story check and require a complete review response."""
+    import anthropic
+
+    if not cfg.anthropic_api_key:
+        raise RuntimeError("Story check needs ANTHROPIC_API_KEY, or use --clip-engine ollama.")
+
+    client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
+    try:
+        resp = client.messages.create(
+            model=cfg.claude_model,
+            max_tokens=cfg.clip_max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_input}],
+        )
+    except Exception as exc:
+        raise RuntimeError("Story check: Claude request failed. Check the API connection and retry.") from exc
+
+    stop_reason = getattr(resp, "stop_reason", None)
+    if stop_reason != "end_turn":
+        advice = (
+            "Raise SHORTSMITH_CLIP_MAX_TOKENS and retry."
+            if stop_reason == "max_tokens"
+            else "Retry the story check."
+        )
+        raise RuntimeError(f"Story check: Claude response did not finish ({stop_reason}). {advice}")
+
+    try:
+        raw = text_from_blocks(getattr(resp, "content", None))
+        reviews = parse_json_response(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Story check: Claude returned invalid JSON. Retry the story check.") from exc
+    if not isinstance(reviews, list) or not reviews:
+        raise RuntimeError("Story check: Claude returned no reviews. Retry the story check.")
+    return reviews

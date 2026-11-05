@@ -19,6 +19,9 @@ captions, b-roll detection) sees the same corrected words:
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
+
+from .records import TranscriptWord
 
 TERMS: tuple[str, ...] = (
     "XRP", "XRPL", "XRP Ledger", "Ripple", "RippleNet", "RLUSD", "ODL",
@@ -89,7 +92,7 @@ def _split(token: str) -> tuple[str, str, str]:
     return m.group("pre"), m.group("core"), m.group("suf")
 
 
-def word_text(word: dict) -> str:
+def word_text(word: Mapping[str, object]) -> str:
     """The spoken text of one transcript word.
 
     Both key spellings are in the wild: WhisperX writes `word`, this project's
@@ -99,14 +102,14 @@ def word_text(word: dict) -> str:
     return str(word.get("text") or word.get("word") or "")
 
 
-def fix_words(words: list[dict]) -> list[dict]:
+def fix_words(words: list[TranscriptWord]) -> list[TranscriptWord]:
     """Return a new word list with known mishearings respelled.
 
     Timings are untouched except for a merge, where the merged word runs from
     the first token's start to the second token's end. Punctuation and
     possessives around a token are kept ("Ginsler's," -> "Gensler's,").
     """
-    out: list[dict] = []
+    out: list[TranscriptWord] = []
     prev = ""
     i = 0
     while i < len(words):
@@ -120,7 +123,7 @@ def fix_words(words: list[dict]) -> list[dict]:
             merge = MERGES.get((low, ncore.lower()))
             if merge and (core[:1].isupper() or prev == merge[1]):
                 spelling = merge[0]
-                merged = {**word, "text": f"{pre}{spelling}{nsuf}"}
+                merged: TranscriptWord = {**word, "text": f"{pre}{spelling}{nsuf}"}
                 # The merged word runs to the second token's end. When neither
                 # token carries one (a transcript whose words were never
                 # aligned), leave the key absent rather than writing a null

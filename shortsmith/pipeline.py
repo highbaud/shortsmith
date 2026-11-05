@@ -28,6 +28,8 @@ from shortsmith import (
     scaffold,
     transcribe,
 )
+from shortsmith._files import atomic_write
+from shortsmith.records import ClipManifest, ClipSpec, TranscriptWord, require_clips
 
 log = logging.getLogger("shortsmith")
 
@@ -95,6 +97,9 @@ def transcribe_only(video: Path) -> None:
               help="Visual style preset (templates/styles/<name>/). Built-in: xrp-revolution, minimal, bold. Default: xrp-revolution.")
 @click.option("--clip-engine", type=click.Choice(["anthropic", "ollama"]), default=None,
               help="Clip-selection backend. anthropic=Claude API (best, costs ~$0.10-$2/video). ollama=local LLM (free, experimental, lower quality).")
+@click.option("--story-check/--no-story-check", default=None,
+              help="Check new picks for missing setup, weak endings, and changed meaning. "
+                   "Default on. Use --from-step 3 --story-check to check saved picks.")
 @click.option("--cut-aware/--no-cut-aware", default=None,
               help="Reframe multicam/two-speaker footage by detecting camera cuts and "
                    "framing each shot's speaker independently. Default off (single static "
@@ -109,10 +114,15 @@ def transcribe_only(video: Path) -> None:
                    "(templates/layouts/<name>.json). Default: two-speaker-stack.")
 def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         engine: str | None, min_score: int | None, style: str | None,
-        clip_engine: str | None, cut_aware: bool | None, layout: str | None,
+        clip_engine: str | None, story_check: bool | None, cut_aware: bool | None, layout: str | None,
         layout_preset: str | None) -> None:
     """Run the full pipeline on a single source video."""
     _setup_logging()
+    if story_check is True and from_step > 3:
+        raise click.UsageError(
+            "Use --from-step 3 --story-check to check saved picks before cutting, "
+            "or shortsmith story-check WORK_DIR for a report only."
+        )
 
     # First-run wizard: ask once for clip engine + style if env is unset.
     if _wizard.needs_wizard(from_step) and not clip_engine and not style:
@@ -127,6 +137,8 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         cfg.style = style
     if clip_engine:
         cfg.clip_engine = clip_engine
+    if story_check is not None:
+        cfg.story_check = story_check
     if cut_aware is not None:
         cfg.reframe_cut_aware = cut_aware
     if layout:
@@ -134,9 +146,40 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
     if layout_preset:
         cfg.split_stack_preset = layout_preset
 
+    _validate_run_config(cfg, from_step, enhance, story_check)
+    work_dir = config.make_work_dir(video)
+    log.info("Work dir: %s", work_dir)
+
+    words = _transcript_for_run(video, work_dir, cfg, from_step)
+    clips = _clips_for_run(words, work_dir, cfg, from_step, story_check, max_clips)
+    manifests = _manifests_for_run(clips, words, video, work_dir, cfg, from_step)
+    manifests = _process_media(manifests, words, work_dir, cfg, from_step, enhance)
+
+    # ---- Step 8: scaffold Hyperframes projects ----
+    t0 = time.time()
+    log.info("Step 8: scaffolding Hyperframes projects")
+    project_dirs = scaffold.scaffold_all(manifests, clips, video, work_dir, cfg.style)
+    checkpoint.mark_step(work_dir, 8)
+    log.info("Step 8 done (%.1fs, %d projects)", time.time() - t0, len(project_dirs))
+
+    log.info("Output: %s", config.make_output_dir(video))
+    failed = [manifest["rank"] for manifest in manifests if manifest.get("alignment_failed")]
+    if failed:
+        raise click.ClickException(
+            f"Alignment failed for clips {failed}. Generated projects remain available. "
+            "Retry with --from-step 6 before finalizing."
+        )
+    log.info("DONE.")
+    log.info("Try:  cd %s/short-01-* && npx %s preview",
+             config.make_output_dir(video), config.HYPERFRAMES_SPEC)
+
+
+def _validate_run_config(
+    cfg: config.Config, from_step: int, enhance: bool, story_check: bool | None,
+) -> None:
     problems = cfg.validate()
     # Filter problems by what the upcoming steps actually need.
-    needs_api_key = from_step <= 2
+    needs_api_key = from_step <= 2 or (from_step == 3 and story_check is True)
     needs_audio_enhance = enhance and from_step <= 5 and cfg.enhance_engine == "clearvoice"
     needs_kit = from_step <= 8  # scaffold targets kit; final step always runs
     if not needs_api_key:
@@ -151,12 +194,11 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
             log.error(p)
         sys.exit(1)
 
-    work_dir = config.make_work_dir(video)
-    log.info("Work dir: %s", work_dir)
 
+def _transcript_for_run(
+    video: Path, work_dir: Path, cfg: config.Config, from_step: int,
+) -> list[TranscriptWord]:
     transcript_path = work_dir / "transcript.json"
-    clips_path = work_dir / "clips.json"
-
     # ---- Step 1: transcribe ----
     if from_step <= 1:
         t0 = time.time()
@@ -166,25 +208,52 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
     else:
         words = transcribe.load_words(transcript_path)
         log.info("Step 1 skipped — loaded %d words from %s", len(words), transcript_path)
+    return words
 
+
+def _clips_for_run(
+    words: list[TranscriptWord], work_dir: Path, cfg: config.Config,
+    from_step: int, story_check: bool | None, max_clips: int | None,
+) -> list[ClipSpec]:
+    clips_path = work_dir / "clips.json"
     # ---- Step 2: find clips ----
     if from_step <= 2:
         t0 = time.time()
-        log.info("Step 2: finding viral clips via Claude")
-        clips = find_clips.find_clips(words, clips_path, cfg)
+        log.info("Step 2: finding clips via %s (story check %s)",
+                 cfg.clip_engine, "on" if cfg.story_check else "off")
+        try:
+            clips = find_clips.find_clips(words, clips_path, cfg)
+        except (RuntimeError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
         log.info("Step 2 done (%.1fs, %d clips)", time.time() - t0, len(clips))
     else:
-        clips = json.loads(clips_path.read_text(encoding="utf-8"))
+        clips = require_clips(json.loads(clips_path.read_text(encoding="utf-8")), clips_path)
         log.info("Step 2 skipped — loaded %d clips from %s", len(clips), clips_path)
+        if story_check is True:
+            try:
+                clips = find_clips.check_stories(
+                    clips, words, work_dir / "story_review.json", cfg,
+                )
+                # Filter this run only. The saved picks also select existing
+                # exports in finalize; a recheck must not replace that plan.
+            except (RuntimeError, ValueError) as exc:
+                raise click.ClickException(str(exc)) from exc
 
     if max_clips:
         clips = clips[:max_clips]
         log.info("Capped to first %d clips for this run", len(clips))
 
     if not clips:
-        log.error("No clips to process — aborting")
+        log.error("No clips to process. If story check ran, see %s for held clips.",
+                  work_dir / "story_review.json")
         sys.exit(1)
+    return clips
 
+
+def _manifests_for_run(
+    clips: list[ClipSpec], words: list[TranscriptWord], video: Path,
+    work_dir: Path, cfg: config.Config, from_step: int,
+) -> list[ClipManifest]:
     # ---- Step 3: cut ----
     if from_step <= 3:
         t0 = time.time()
@@ -194,7 +263,13 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         log.info("Step 3 done (%.1fs)", time.time() - t0)
     else:
         manifests = json.loads((work_dir / "cut_manifests.json").read_text(encoding="utf-8"))
+    return manifests
 
+
+def _process_media(
+    manifests: list[ClipManifest], words: list[TranscriptWord], work_dir: Path,
+    cfg: config.Config, from_step: int, enhance: bool,
+) -> list[ClipManifest]:
     # ---- Step 4: clean (word-aware) ----
     if from_step <= 4:
         t0 = time.time()
@@ -220,11 +295,15 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
     # ---- Step 6: word alignment of each cleaned/enhanced clip ----
     if from_step <= 6:
         t0 = time.time()
-        log.info("Step 6: aligning word timings (%s)", getattr(cfg, "align_engine", "whisperx"))
+        log.info("Step 6: aligning word timings (%s)", cfg.align_engine)
+        checkpoint.clear_step(work_dir, 6)
         manifests = align.align_all(manifests, cfg)
         _save_manifests(manifests, work_dir)
-        checkpoint.mark_step(work_dir, 6)
-        log.info("Step 6 done (%.1fs)", time.time() - t0)
+        if any(manifest.get("alignment_failed") for manifest in manifests):
+            log.warning("Step 6 incomplete (%.1fs); alignment needs a retry", time.time() - t0)
+        else:
+            checkpoint.mark_step(work_dir, 6)
+            log.info("Step 6 done (%.1fs)", time.time() - t0)
 
     # ---- Step 7: reframe to 9:16 ----
     if from_step <= 7:
@@ -234,23 +313,34 @@ def run(video: Path, max_clips: int | None, from_step: int, enhance: bool,
         _save_manifests(manifests, work_dir)
         checkpoint.mark_step(work_dir, 7)
         log.info("Step 7 done (%.1fs)", time.time() - t0)
-
-    # ---- Step 8: scaffold Hyperframes projects ----
-    t0 = time.time()
-    log.info("Step 8: scaffolding Hyperframes projects")
-    project_dirs = scaffold.scaffold_all(manifests, clips, video, work_dir, cfg)
-    checkpoint.mark_step(work_dir, 8)
-    log.info("Step 8 done (%.1fs, %d projects)", time.time() - t0, len(project_dirs))
-
-    log.info("DONE.")
-    log.info("Output: %s", config.make_output_dir(video))
-    log.info("Try:  cd %s/short-01-* && npx %s preview",
-             config.make_output_dir(video), config.HYPERFRAMES_SPEC)
+    return manifests
 
 
-def _save_manifests(manifests: list[dict], work_dir: Path) -> None:
-    (work_dir / "cut_manifests.json").write_text(
-        json.dumps(manifests, indent=2, ensure_ascii=False), encoding="utf-8"
+@cli.command(name="story-check")
+@click.argument("work_dir", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.option("--clip-engine", type=click.Choice(["anthropic", "ollama"]), default=None)
+def story_check_cmd(work_dir: Path, clip_engine: str | None) -> None:
+    """Check saved clips.json against transcript.json. Write a report only."""
+    _setup_logging()
+    cfg = config.Config()
+    if clip_engine:
+        cfg.clip_engine = clip_engine
+    try:
+        clips = json.loads((work_dir / "clips.json").read_text(encoding="utf-8"))
+        words = transcribe.load_words(work_dir / "transcript.json")
+        report_path = work_dir / "story_review.json"
+        approved = find_clips.check_stories(clips, words, report_path, cfg)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"{len(approved)}/{len(clips)} clips passed. Report: {report_path}")
+    click.echo("clips.json was not changed.")
+    if len(approved) != len(clips):
+        raise click.ClickException("Some clips were held. Read the report before cutting.")
+
+
+def _save_manifests(manifests: list[ClipManifest], work_dir: Path) -> None:
+    atomic_write(
+        work_dir / "cut_manifests.json", json.dumps(manifests, indent=2, ensure_ascii=False)
     )
 
 

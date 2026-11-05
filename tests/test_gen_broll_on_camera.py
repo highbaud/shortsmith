@@ -3,11 +3,9 @@ camera (the clip spec's `speakers`)."""
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import gen_broll  # noqa: E402
+from shortsmith.rendering import gen_broll
 
 
 def person(name: str) -> dict:

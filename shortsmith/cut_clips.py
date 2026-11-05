@@ -13,8 +13,14 @@ import logging
 import subprocess
 from pathlib import Path
 
+from . import story_review
+from ._files import atomic_write
 from ._media import probe_duration
+from ._process import resolve_executable
+from .clean_clips import plan_cleaning
 from .config import Config
+from .records import ClipManifest, ClipSpec, Segment, TranscriptWord
+from .word_pauses import PAUSE_MIN_S
 
 log = logging.getLogger(__name__)
 
@@ -22,56 +28,63 @@ PUNCTUATION_END = {".", "!", "?", '."', '!"', '?"', '.”', '!”', '?”'}
 
 
 def cut_all(
-    clips: list[dict],
-    words: list[dict],
+    clips: list[ClipSpec],
+    words: list[TranscriptWord],
     source_video: Path,
     work_dir: Path,
     cfg: Config,
-) -> list[dict]:
+) -> list[ClipManifest]:
     """Cut every clip from `clips` to `work_dir/raw/short-NN.mp4`. Return manifests."""
     raw_dir = work_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    manifests = []
+    manifests: list[ClipManifest] = []
     for clip in clips:
         manifest = cut_one(clip, words, source_video, raw_dir, cfg)
         manifests.append(manifest)
 
-    (work_dir / "cut_manifests.json").write_text(
-        json.dumps(manifests, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    atomic_write(work_dir / "cut_manifests.json",
+                 json.dumps(manifests, indent=2, ensure_ascii=False))
     return manifests
 
 
 def cut_one(
-    clip: dict,
-    words: list[dict],
+    clip: ClipSpec,
+    words: list[TranscriptWord],
     source_video: Path,
     raw_dir: Path,
     cfg: Config,
-) -> dict:
+) -> ClipManifest:
     """Cut one clip — snap boundaries, ffmpeg-cut each segment, xfade-concat."""
     rank = clip["rank"]
     requested = clip["segments"]
-
-    # Snap each segment's start and end to safe boundaries
-    snapped: list[list[float]] = []
-    for s_start, s_end in requested:
-        new_start = _snap_boundary(s_start, words, cfg, prefer_after=False)
-        new_end = _snap_boundary(s_end, words, cfg, prefer_after=True)
-        if new_end is None or new_start is None or new_end - new_start < 0.5:
-            log.warning("Clip %d: dropping segment (%.2f, %.2f) — no safe boundary",
-                        rank, s_start, s_end)
-            continue
-        snapped.append([new_start, new_end])
-
-    if not snapped:
-        log.warning("Clip %d: all segments failed boundary snap; falling back to raw start/end", rank)
-        snapped = [[clip["start"], clip["end"]]]
+    snapped = plan_segments(clip, words, cfg)
+    review = clip.get("story_review")
+    if cfg.story_check and review is not None and not story_review.matches_approval(
+        review, words, snapped, plan_cleaning(words, snapped, cfg)["retained_segments"],
+        cfg.seam_xfade_seconds,
+    ):
+        raise ValueError(
+            f"Clip {rank}: cuts differ from the approved story review. "
+            "Run again with --from-step 3 --story-check."
+        )
 
     out_path = raw_dir / f"short-{rank:02d}.mp4"
     seg_paths = _ffmpeg_cut_segments(source_video, snapped, raw_dir, rank)
-    _ffmpeg_concat_with_xfade(seg_paths, out_path, cfg.seam_xfade_seconds)
+    segment_durations = [probe_duration(path) for path in seg_paths]
+    if cfg.story_check and review is not None and (
+        review.get("retained_speech_digest") != story_review.retained_speech_digest(
+            words, plan_cleaning(words, snapped, cfg,
+                                 segment_durations=segment_durations)["retained_segments"]
+        )
+    ):
+        raise ValueError(
+            f"Clip {rank}: measured cuts differ from the approved story review. "
+            "Run again with --from-step 3 --story-check."
+        )
+    _ffmpeg_concat_with_xfade(seg_paths, out_path, cfg.seam_xfade_seconds,
+                              durations=segment_durations)
+    duration = probe_duration(out_path)
 
     # Clean up segment intermediates
     for p in seg_paths:
@@ -80,27 +93,56 @@ def cut_one(
         except OSError:
             pass
 
-    return {
+    manifest: ClipManifest = {
         "rank": rank,
         "slug": clip["slug"],
         "requested_segments": requested,
         "snapped_segments": snapped,
         "raw_path": str(out_path),
-        "duration": sum(e - s for s, e in snapped),
+        "duration": duration,
+        "segment_durations": segment_durations,
+        "seam_xfade_seconds": cfg.seam_xfade_seconds,
     }
+    if cfg.story_check and review is not None:
+        manifest["story_review"] = {**review, "cut_segment_durations": list(segment_durations)}
+    return manifest
+
+
+def plan_segments(clip: ClipSpec, words: list[TranscriptWord], cfg: Config) -> list[Segment]:
+    """Plan the existing boundary snaps without cutting media."""
+    snapped: list[Segment] = []
+    for s_start, s_end in clip.get("segments") or [[clip["start"], clip["end"]]]:
+        new_start = _snap_boundary(s_start, words, cfg, prefer_after=False)
+        new_end = _snap_boundary(s_end, words, cfg, prefer_after=True)
+        if new_end is None or new_start is None or new_end - new_start < 0.5:
+            log.warning("Clip %s: dropping segment (%.2f, %.2f): no safe boundary",
+                        clip.get("rank", "unranked"), s_start, s_end)
+            continue
+        snapped.append([new_start, new_end])
+
+    if not snapped:
+        log.warning("Clip %s: all segments failed boundary snap; falling back to raw start/end",
+                    clip.get("rank", "unranked"))
+        snapped = [[clip["start"], clip["end"]]]
+    if cfg.story_check:
+        story_review.require_safe_boundaries(words, snapped)
+    else:
+        story_review.require_valid_timing(words, snapped)
+    return snapped
 
 
 def _snap_boundary(
     t: float,
-    words: list[dict],
+    words: list[TranscriptWord],
     cfg: Config,
     *,
     prefer_after: bool,
 ) -> float | None:
     """Snap a requested cut point to a word-gap boundary.
 
-    Guarantees: the returned time NEVER lands inside a word — it's always
-    in a silence between two words (or at the very start/end of the transcript).
+    The returned time is a gap or shared edge between words, or a recording
+    edge. With story checking on, the planner also refuses cuts that cross
+    overlapping word spans.
 
     `prefer_after` matters for end-of-clip snaps: we want to EXTEND forward
     to find a clean sentence end rather than chop a thought short. So when
@@ -114,13 +156,27 @@ def _snap_boundary(
     Tiered preference:
       Tier 0 — sentence-end punctuation + ≥min_silence gap
       Tier 1 — ≥breath_silence gap (any)
-      Tier 2 — any word gap, within ±(snap_window × 2.5)
-      Tier 3 — any word gap, within ±(snap_window × 5.0) — last resort
+      Tier 2 — a pause (gap ≥ word_pauses.PAUSE_MIN_S), within ±(snap_window × 2.5)
+      Tier 3 — any word gap, within ±(snap_window × 2.5)
+      Tier 4 — a pause, within ±(snap_window × 5.0)
+      Tier 5 — any word gap, within ±(snap_window × 5.0) — last resort
+
+    A shorter or zero gap is a shared word edge in running speech, so a
+    measured pause wins over it within the same window.
     """
-    if not words or len(words) < 2:
+    if not words:
         return t
 
     base = cfg.boundary_snap_window
+
+    # The recording's speech edges are safe cuts too. Internal gaps cannot
+    # preserve the first/last word when a requested boundary touches that word.
+    if not prefer_after and t < float(words[0]["end"]):
+        return min(t, float(words[0]["start"]))
+    if prefer_after and t > float(words[-1]["start"]):
+        return max(t, float(words[-1]["end"]))
+    if len(words) == 1:
+        return t
 
     # Asymmetric windows when snapping the END of a clip.
     if prefer_after:
@@ -142,7 +198,7 @@ def _snap_boundary(
         prev_end = float(prev["end"])
         next_start = float(nxt["start"])
         gap = next_start - prev_end
-        if gap <= 0:
+        if gap < 0:
             continue
 
         boundary = (prev_end + next_start) / 2.0
@@ -164,9 +220,9 @@ def _snap_boundary(
         elif gap >= cfg.boundary_breath_silence and dist <= w0:
             tier = 1
         elif dist <= w1:
-            tier = 2
+            tier = 2 if gap >= PAUSE_MIN_S else 3
         elif dist <= w2:
-            tier = 3
+            tier = 4 if gap >= PAUSE_MIN_S else 5
         else:
             continue
 
@@ -189,7 +245,7 @@ def _snap_boundary(
         for i in range(len(words) - 1):
             prev_end = float(words[i]["end"])
             next_start = float(words[i + 1]["start"])
-            if next_start > prev_end:
+            if next_start >= prev_end:
                 gaps.append((abs((prev_end + next_start) / 2.0 - t), (prev_end + next_start) / 2.0))
         if gaps:
             gaps.sort(key=lambda g: g[0])
@@ -202,7 +258,7 @@ def _snap_boundary(
 
 def _ffmpeg_cut_segments(
     source: Path,
-    segments: list[list[float]],
+    segments: list[Segment],
     raw_dir: Path,
     rank: int,
 ) -> list[Path]:
@@ -213,7 +269,7 @@ def _ffmpeg_cut_segments(
         # Use -ss before -i for speed (keyframe seek), then -ss again after -i for accuracy
         # — combined with re-encode for frame-accuracy.
         cmd = [
-            "ffmpeg", "-y",
+            resolve_executable("ffmpeg"), "-y",
             "-ss", f"{start:.3f}",
             "-to", f"{end:.3f}",
             "-i", str(source),
@@ -236,12 +292,14 @@ def _ffmpeg_concat_with_xfade(
     seg_paths: list[Path],
     out_path: Path,
     xfade: float,
+    *,
+    durations: list[float] | None = None,
 ) -> None:
     """Concat segments with xfade crossfade at each seam."""
     if len(seg_paths) == 1:
         # Simple copy / passthrough — but we need to re-encode to ensure faststart
         cmd = [
-            "ffmpeg", "-y",
+            resolve_executable("ffmpeg"), "-y",
             "-i", str(seg_paths[0]),
             "-c", "copy",
             "-movflags", "+faststart",
@@ -252,15 +310,23 @@ def _ffmpeg_concat_with_xfade(
 
     # Build complex xfade filter chain.
     # First we need each segment's duration.
-    durations = [probe_duration(p) for p in seg_paths]
+    if durations is None:
+        durations = [probe_duration(p) for p in seg_paths]
 
     inputs: list[str] = []
     for p in seg_paths:
         inputs += ["-i", str(p)]
 
-    filter_parts = []
+    # AAC decoding includes end padding, and video/audio stream lengths can
+    # differ by a frame. Normalize audio to the same measured segment duration
+    # used for video seam offsets and word mapping, rather than accumulating
+    # codec padding at every acrossfade.
+    filter_parts = [
+        f"[{index}:a]apad,atrim=duration={duration:.6f},asetpts=PTS-STARTPTS[audio{index}]"
+        for index, duration in enumerate(durations)
+    ]
     last_v = "[0:v]"
-    last_a = "[0:a]"
+    last_a = "[audio0]"
     offset = durations[0] - xfade
 
     for i in range(1, len(seg_paths)):
@@ -270,7 +336,7 @@ def _ffmpeg_concat_with_xfade(
             f"{last_v}[{i}:v]xfade=transition=fade:duration={xfade}:offset={offset:.3f}{out_v}"
         )
         filter_parts.append(
-            f"{last_a}[{i}:a]acrossfade=d={xfade}{out_a}"
+            f"{last_a}[audio{i}]acrossfade=d={xfade}{out_a}"
         )
         last_v = out_v
         last_a = out_a
@@ -278,7 +344,7 @@ def _ffmpeg_concat_with_xfade(
 
     filter_complex = ";".join(filter_parts)
     cmd = [
-        "ffmpeg", "-y",
+        resolve_executable("ffmpeg"), "-y",
         *inputs,
         "-filter_complex", filter_complex,
         "-map", last_v,

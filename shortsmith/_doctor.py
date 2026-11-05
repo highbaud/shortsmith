@@ -10,7 +10,7 @@ Prints a green/red checklist:
 - SFX pack populated (assets/sfx/pack/pack.json)
 - YuNet face detection model present
 
-Each row prints ✅ / ⚠️  / ❌ with a one-line hint on how to fix it. Designed to
+Each row prints ✅ / ⚠  / ❌ with a one-line hint on how to fix it. Designed to
 be the first thing a user runs when a pipeline behaves unexpectedly.
 """
 from __future__ import annotations
@@ -48,11 +48,12 @@ def _has(cmd: str) -> bool:
 
 
 def _bytes(n: int) -> str:
+    value = float(n)
     for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024:
-            return f"{n:.0f} {unit}"
-        n /= 1024  # type: ignore[assignment]
-    return f"{n:.1f} TB"
+        if value < 1024:
+            return f"{value:.0f} {unit}"
+        value /= 1024
+    return f"{value:.1f} TB"
 
 
 def _check_external_tools() -> int:

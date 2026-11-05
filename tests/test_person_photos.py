@@ -6,13 +6,10 @@ substring, so the suite never touches Wikidata or Commons.
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-import person_photos as pp  # noqa: E402
+from shortsmith.rendering import person_photos as pp
 
 
 # --------------------------------------------------------------------------- #

@@ -76,10 +76,7 @@ def scan_file(path: Path) -> list[tuple[int, str, str]]:
     """Return [(line_no, pattern_name, redacted_match)] for any hits."""
     if path.suffix.lower() in SKIP_EXTS or path.name in SKIP_NAMES:
         return []
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, UnicodeDecodeError):
-        return []
+    text = path.read_text(encoding="utf-8", errors="replace")
 
     # Allow an inline opt-out for known-safe lines: a trailing comment of
     # "pragma: allowlist secret" (the detect-secrets convention) or
@@ -107,8 +104,15 @@ def main(argv: list[str]) -> int:
         return 0
 
     total = 0
+    unreadable = False
     for f in files:
-        for line_no, pattern_name, snippet in scan_file(f):
+        try:
+            hits = scan_file(f)
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"  {f}: cannot scan file ({exc})", file=sys.stderr)
+            unreadable = True
+            continue
+        for line_no, pattern_name, snippet in hits:
             print(f"  {f}:{line_no}  {pattern_name}: {snippet}", file=sys.stderr)
             total += 1
 
@@ -123,7 +127,7 @@ def main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
-    return 0
+    return 1 if unreadable else 0
 
 
 if __name__ == "__main__":
